@@ -227,7 +227,7 @@ def _forecast(series, steps, seasonal=False):
 @st.cache_data(ttl=3600, show_spinner=False)
 def forecast_diario(daily_df, days):
     agg = daily_df.groupby('data')['casos'].sum().sort_index()
-    fc = _forecast(agg, days, seasonal=False)
+    fc = _forecast(agg, days, seasonal=True)
     last_date = agg.index.max()
     future = pd.date_range(last_date + timedelta(days=1), periods=days, freq='D')
     return pd.DataFrame({'data': future, 'casos': np.round(fc, 1)})
@@ -498,6 +498,7 @@ if aba == "Painel Completo":
                   31:'MG',32:'ES',33:'RJ',35:'SP',41:'PR',42:'SC',43:'RS',50:'MS',51:'MT',
                   52:'GO',53:'DF'}
         uf_counts = df_raw['SG_UF_NOT'].value_counts().head(15)
+        uf_counts.index = pd.to_numeric(uf_counts.index, errors='coerce').fillna(0).astype(int)
         uf_counts.index = uf_counts.index.map(lambda x: uf_map.get(x, str(x)))
         fig_uf = go.Figure(data=[go.Bar(
             x=uf_counts.index, y=uf_counts.values,
