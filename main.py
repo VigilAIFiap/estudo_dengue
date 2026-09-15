@@ -470,7 +470,7 @@ if aba == "Painel Completo":
             .dropna(subset=['LAT', 'LON'])
         )
 
-        fig_map = px.scatter_map(
+        fig_map = px.scatter_mapbox(
             mun_geo,
             lat='LAT', lon='LON',
             size='casos',
@@ -479,7 +479,7 @@ if aba == "Painel Completo":
             size_max=30,
             hover_name='NOME_MUNICIP',
             hover_data={'casos': True, 'graves': True, 'LAT': False, 'LON': False},
-            style='carto-positron',
+            mapbox_style='carto-positron',
             zoom=3,
             center=dict(lat=-14.2, lon=-51.9),
         )
