@@ -1,11 +1,40 @@
 from config import DADOS
 import pandas as pd
 import numpy as np
-def etl():
-    df_25 = pd.read_parquet(f'{DADOS} / df_bronze_25.parquet ')
-    df_26 = pd.read_parquet(f'{DADOS} / df_bronze_26.parquet ')
 
-    df = pd.concat([df_25 , df_26])
+def etl():
+    df_25 = pd.read_parquet(f'{DADOS}/df_bronze_25.parquet ')
+    df_26 = pd.read_parquet(f'{DADOS}/df_bronze_26.parquet ')
+    municipios = pd.read_csv(f'{DADOS}/br_municgestor.csv')
+    
+    # Lê o arquivo inteiro
+    with open(r"C:\Users\vitor\OneDrive\Documentos\Github\VigilIA\dados\clima\dados_A001_D_2025-01-01_2026-06-01.csv", encoding="utf-8") as f:
+        linhas = f.readlines()
+
+    # Extrai metadados das primeiras linhas
+    nome = linhas[0].split(":")[1].strip()
+    codigo = linhas[1].split(":")[1].strip()
+    latitude = float(linhas[2].split(":")[1].strip())
+    longitude = float(linhas[3].split(":")[1].strip())
+    data_inicial = linhas[6].split(":")[1].strip()
+    data_final = linhas[7].split(":")[1].strip()
+
+    # Agora lê os dados de medição (pulando cabeçalho)
+    df_clima_tempo = pd.read_csv(r"C:\Users\vitor\OneDrive\Documentos\Github\VigilIA\dados\clima\dados_A001_D_2025-01-01_2026-06-01.csv", 
+                    sep=";", 
+                    skiprows=10,  # ajusta conforme o número de linhas de metadados
+                    encoding="utf-8")
+
+    # Adiciona colunas extras
+    df_clima_tempo["local"] = nome
+    df_clima_tempo["codigo_estacao"] = codigo
+    df_clima_tempo["latitude"] = latitude
+    df_clima_tempo["longitude"] = longitude
+    df_clima_tempo["data_inicial"] = data_inicial
+    df_clima_tempo["data_final"] = data_final
+
+    df = pd.concat([df_25 , df_26]).reset_index()
+    df.columns = df.columns.str.upper()
 
     # ============================================================
     # 4. CONVERSÃO DE COLUNAS DE DATA
@@ -27,12 +56,7 @@ def etl():
     for col in ['DT_CHIK_S1', 'DT_CHIK_S2', 'DT_PRNT']:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
-
-    
-    date_cols = [c for c in df.columns if 'DT_' in c and pd.api.types.is_datetime64_any_dtype(df[c])]
-    
-
-    
+   
 
     # ============================================================
     # 5.1 Colunas binárias (1=Sim, 2=Não) - converter com tolerância
@@ -80,7 +104,8 @@ def etl():
     for col in ID_COLS:
         if col in df.columns:
             df[col] = safe_to_int64(df[col])
-
+    municipios = municipios.drop(columns ={'codigos_gestor'})
+    df = df.merge(municipios, left_on='ID_MUNICIP' , right_on='codigo', how='left')
     UF_MAP = {
     'ac': '12', 'al': '27', 'ap': '16', 'am': '13', 'ba': '29', 'ce': '23',
     'df': '53', 'es': '32', 'go': '52', 'ma': '21', 'mt': '51', 'ms': '50',
@@ -103,9 +128,11 @@ def etl():
     # ============================================================
     # 6.1 Sexo
     # ============================================================
-    df['CS_SEXO'] = df['CS_SEXO'].astype(str).str.upper().str.strip()
-    df['CS_SEXO'] = df['CS_SEXO'].replace(['I', 'NAN', 'NONE', ''], None)
-    df['CS_SEXO'] = df['CS_SEXO'].astype('category')
+    if 'CS_SEXO' in df.columns:
+        df['CS_SEXO'] = df['CS_SEXO'].astype(str).str.upper().str.strip()
+        df['CS_SEXO'] = df['CS_SEXO'].replace(['I', 'NAN', 'NONE', ''], None)
+        df['CS_SEXO'] = df['CS_SEXO'].astype('category')
+
     
 
     GESTANT_MAP = {
@@ -161,9 +188,7 @@ def etl():
     df['IDADE_VALOR'] = df['NU_IDADE_N'].apply(lambda x: decode_idade(x)[1])
     df['IDADE_ANOS'] = np.where(
         df['IDADE_TIPO'] == 'anos', df['IDADE_VALOR'],
-        np.where(df['IDADE_TIPO'] == 'meses', (df['IDADE_VALOR'] / 12).round(1),
-                np.where(df['IDADE_TIPO'] == 'dias', (df['IDADE_VALOR'] / 365).round(3), None))
-    )
+        np.where(df['IDADE_TIPO'] == 'meses', (df['IDADE_VALOR'] / 12).round(1),np.where(df['IDADE_TIPO'] == 'dias', (df['IDADE_VALOR'] / 365).round(3), None)))
 
     FILL_COLS = (
     ['FEBRE', 'MIALGIA', 'CEFALEIA', 'EXANTEMA', 'VOMITO', 'NAUSEA',
@@ -180,7 +205,27 @@ def etl():
     for col in FILL_COLS:
         if col in df.columns and df[col].isna().any():
             df[col] = df[col].fillna(2)
-            
-    df.to_parquet(f'{DADOS} / df_prata.parquet')
+
+    colunas_drop = [
+    "INDEX","TP_NOT","ID_AGRAVO","ID_REGIONA","ID_UNIDADE","ID_OCUPA_N",
+    "LACO","RES_CHIKS1","RES_CHIKS2","RESUL_PRNT","RESUL_SORO","RESUL_NS1",
+    "RESUL_VI_N","RESUL_PCR_","SOROTIPO","HISTOPA_N","IMUNOH_N","TPAUTOCTO",
+    "COUFINF","COPAISINF","COMUNINF","CRITERIO","DOENCA_TRA","CLINC_CHIK",
+    "ALRM_HIPOT","ALRM_PLAQ","ALRM_VOM","ALRM_SANG","ALRM_HEMAT","ALRM_ABDOM",
+    "ALRM_LETAR","ALRM_HEPAT","ALRM_LIQ","GRAV_PULSO","GRAV_CONV","GRAV_ENCH",
+    "GRAV_INSUF","GRAV_TAQUI","GRAV_EXTRE","GRAV_HIPOT","GRAV_HEMAT","GRAV_MELEN",
+    "GRAV_METRO","GRAV_SANG","GRAV_AST","GRAV_MIOC","GRAV_CONSC","GRAV_ORGAO",
+    "MANI_HEMOR","EPISTAXE","GENGIVO","METRO","PETEQUIAS","HEMATURA","SANGRAM",
+    "LACO_N","PLASMATICO","EVIDENCIA","PLAQ_MENOR","CON_FHD","COMPLICA",
+    "TP_SISTEMA","NDUPLIC_N","CS_FLXRET","FLXRECEBI","MIGRADO_W",
+    "siafi_id","ddd","fuso_horario","IDADE_TIPO","IDADE_VALOR"
+    ]
+    df = df.drop(columns=[c for c in colunas_drop if c in df.columns])
+
+
+    df.to_parquet(f'{DADOS}/df_prata.parquet')
+    
+
     return df
 
+df = etl()
