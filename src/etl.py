@@ -2,38 +2,12 @@ from config import DADOS
 import pandas as pd
 import numpy as np
 
-def etl():
-    df_25 = pd.read_parquet(f'{DADOS}/df_bronze_25.parquet ')
-    df_26 = pd.read_parquet(f'{DADOS}/df_bronze_26.parquet ')
-    municipios = pd.read_csv(f'{DADOS}/br_municgestor.csv')
-    
-    # Lê o arquivo inteiro
-    with open(r"C:\Users\vitor\OneDrive\Documentos\Github\VigilIA\dados\clima\dados_A001_D_2025-01-01_2026-06-01.csv", encoding="utf-8") as f:
-        linhas = f.readlines()
+def etl(output_path=None):
+    df_25 = pd.read_parquet(DADOS / 'df_bronze_25.parquet')
+    df_26 = pd.read_parquet(DADOS / 'df_bronze_26.parquet')
+    municipios = pd.read_csv(DADOS / 'municipios.csv')
 
-    # Extrai metadados das primeiras linhas
-    nome = linhas[0].split(":")[1].strip()
-    codigo = linhas[1].split(":")[1].strip()
-    latitude = float(linhas[2].split(":")[1].strip())
-    longitude = float(linhas[3].split(":")[1].strip())
-    data_inicial = linhas[6].split(":")[1].strip()
-    data_final = linhas[7].split(":")[1].strip()
-
-    # Agora lê os dados de medição (pulando cabeçalho)
-    df_clima_tempo = pd.read_csv(r"C:\Users\vitor\OneDrive\Documentos\Github\VigilIA\dados\clima\dados_A001_D_2025-01-01_2026-06-01.csv", 
-                    sep=";", 
-                    skiprows=10,  # ajusta conforme o número de linhas de metadados
-                    encoding="utf-8")
-
-    # Adiciona colunas extras
-    df_clima_tempo["local"] = nome
-    df_clima_tempo["codigo_estacao"] = codigo
-    df_clima_tempo["latitude"] = latitude
-    df_clima_tempo["longitude"] = longitude
-    df_clima_tempo["data_inicial"] = data_inicial
-    df_clima_tempo["data_final"] = data_final
-
-    df = pd.concat([df_25 , df_26]).reset_index()
+    df = pd.concat([df_25, df_26], ignore_index=True)
     df.columns = df.columns.str.upper()
 
     # ============================================================
@@ -104,8 +78,26 @@ def etl():
     for col in ID_COLS:
         if col in df.columns:
             df[col] = safe_to_int64(df[col])
-    municipios = municipios.drop(columns ={'codigos_gestor'})
-    df = df.merge(municipios, left_on='ID_MUNICIP' , right_on='codigo', how='left')
+    municipios['codigo_ibge'] = pd.to_numeric(
+        municipios['codigo_ibge'], errors='raise'
+    ).astype('int64')
+    municipios['ID_MUNICIP'] = (municipios['codigo_ibge'] // 10).astype('int64')
+    municipio_cols = [
+        'ID_MUNICIP', 'codigo_ibge', 'nome', 'latitude', 'longitude',
+        'capital', 'codigo_uf',
+    ]
+    df = df.merge(
+        municipios[municipio_cols],
+        on='ID_MUNICIP',
+        how='left',
+        validate='many_to_one',
+    )
+    if 'MUNICIPIO' in df.columns:
+        df['MUNICIPIO'] = (
+            df['MUNICIPIO'].astype('string').fillna(df['nome'].astype('string'))
+        )
+    else:
+        df['MUNICIPIO'] = df['nome'].astype('string')
     UF_MAP = {
     'ac': '12', 'al': '27', 'ap': '16', 'am': '13', 'ba': '29', 'ce': '23',
     'df': '53', 'es': '32', 'go': '52', 'ma': '21', 'mt': '51', 'ms': '50',
@@ -115,15 +107,25 @@ def etl():
     }
 
     def padronizar_uf(ser):
-        s = ser.astype(str).str.lower().str.strip()
-        s = s.map(lambda x: UF_MAP.get(x, x)) 
-        s = s.replace(['nan', 'none', ''], None)
-        s = s.str.zfill(2) 
+        s = ser.astype('string').str.lower().str.strip()
+        s = s.str.replace(r'\.0$', '', regex=True)
+        abbreviations = s.map(UF_MAP)
+        s = abbreviations.fillna(s)
+        s = s.where(s.str.fullmatch(r'\d{1,2}')).str.zfill(2)
         return s.astype('category')
 
     for col in ['SG_UF_NOT', 'SG_UF', 'UF']:
         if col in df.columns:
             df[col] = padronizar_uf(df[col])
+
+    if 'codigo_uf' in df.columns:
+        df['UF'] = (
+            pd.to_numeric(df['codigo_uf'], errors='coerce')
+            .astype('Int64')
+            .astype('string')
+            .str.zfill(2)
+            .astype('category')
+        )
 
     # ============================================================
     # 6.1 Sexo
@@ -139,10 +141,12 @@ def etl():
     1: '1o_trimestre', 2: '2o_trimestre', 3: '3o_trimestre',
     4: 'id_gest_ignorada', 5: 'nao', 6: 'nao_se_aplica', 9: 'ignorado'
     }
-    df['CS_GESTANT'] = safe_to_int64(df['CS_GESTANT']).map(GESTANT_MAP).astype('category')
+    if 'CS_GESTANT' in df.columns:
+        df['CS_GESTANT'] = safe_to_int64(df['CS_GESTANT']).map(GESTANT_MAP).astype('category')
 
     RACA_MAP = {1: 'Branca', 2: 'Preta', 3: 'Amarela', 4: 'Parda', 5: 'Indígena'}
-    df['CS_RACA'] = safe_to_int64(df['CS_RACA']).map(RACA_MAP).astype('category')
+    if 'CS_RACA' in df.columns:
+        df['CS_RACA'] = safe_to_int64(df['CS_RACA']).map(RACA_MAP).astype('category')
 
 
     ESCOL_MAP = {
@@ -151,7 +155,8 @@ def etl():
     6: 'superior_incompleto', 7: 'superior_completo', 8: 'nao_se_aplica',
     9: 'ignorado', 10: 'fund_1a4'
 }
-    df['CS_ESCOL_N'] = safe_to_int64(df['CS_ESCOL_N']).map(ESCOL_MAP).astype('category')
+    if 'CS_ESCOL_N' in df.columns:
+        df['CS_ESCOL_N'] = safe_to_int64(df['CS_ESCOL_N']).map(ESCOL_MAP).astype('category')
 
     CLASSI_MAP = {
     0: 'descartado', 1: 'dengue_classico', 2: 'dengue_hemorragico',
@@ -159,20 +164,26 @@ def etl():
     8: 'inconclusivo', 10: 'dengue', 11: 'chikungunya',
     12: 'doenca_aguda_nao_especificada', 13: 'zika'
 }
-    df['CLASSI_FIN'] = safe_to_int64(df['CLASSI_FIN']).map(CLASSI_MAP).astype('category')
+    if 'CLASSI_FIN' in df.columns:
+        df['CLASSI_FIN'] = safe_to_int64(df['CLASSI_FIN']).map(CLASSI_MAP).astype('category')
 
     CRITERIO_MAP = {
     0: 'descartado', 1: 'laboratorial', 2: 'clinico_epidemiologico',
     3: 'vinculo_epidemiologico', 4: 'exame_inespecifico'
 }
-    df['CRITERIO'] = safe_to_int64(df['CRITERIO']).map(CRITERIO_MAP).astype('category')
+    if 'CRITERIO' in df.columns:
+        df['CRITERIO'] = safe_to_int64(df['CRITERIO']).map(CRITERIO_MAP).astype('category')
 
     EVOLUCAO_MAP = {0: 'ignorado', 1: 'cura', 2: 'obito_dengue', 3: 'obito_outra_causa'}
-    df['EVOLUCAO'] = safe_to_int64(df['EVOLUCAO']).map(EVOLUCAO_MAP).astype('category')
-    df['ID_AGRAVO'] = df['ID_AGRAVO'].astype('category')
+    if 'EVOLUCAO' in df.columns:
+        df['EVOLUCAO'] = safe_to_int64(df['EVOLUCAO']).map(EVOLUCAO_MAP).astype('category')
+    if 'ID_AGRAVO' in df.columns:
+        df['ID_AGRAVO'] = df['ID_AGRAVO'].astype('category')
 
-    df['NU_IDADE_N'] = safe_to_int64(df['NU_IDADE_N'])
-    df['ANO_NASC'] = safe_to_int64(df['ANO_NASC'])
+    if 'NU_IDADE_N' in df.columns:
+        df['NU_IDADE_N'] = safe_to_int64(df['NU_IDADE_N'])
+    if 'ANO_NASC' in df.columns:
+        df['ANO_NASC'] = safe_to_int64(df['ANO_NASC'])
 
     def decode_idade(val):
         if pd.isna(val):
@@ -184,27 +195,21 @@ def etl():
         elif v >= 1000: return ('horas', v - 1000)
         return ('ignorado', 0)
 
-    df['IDADE_TIPO'] = df['NU_IDADE_N'].apply(lambda x: decode_idade(x)[0])
-    df['IDADE_VALOR'] = df['NU_IDADE_N'].apply(lambda x: decode_idade(x)[1])
-    df['IDADE_ANOS'] = np.where(
-        df['IDADE_TIPO'] == 'anos', df['IDADE_VALOR'],
-        np.where(df['IDADE_TIPO'] == 'meses', (df['IDADE_VALOR'] / 12).round(1),np.where(df['IDADE_TIPO'] == 'dias', (df['IDADE_VALOR'] / 365).round(3), None)))
-
-    FILL_COLS = (
-    ['FEBRE', 'MIALGIA', 'CEFALEIA', 'EXANTEMA', 'VOMITO', 'NAUSEA',
-     'DOR_COSTAS', 'CONJUNTVIT', 'ARTRITE', 'ARTRALGIA', 'PETEQUIA_N',
-     'LEUCOPENIA', 'LACO', 'DOR_RETRO', 'DIABETES', 'HEMATOLOG',
-     'HEPATOPAT', 'RENAL', 'HIPERTENSA', 'ACIDO_PEPT', 'AUTO_IMUNE']
-    + [c for c in df.columns if c.startswith('ALRM_')]
-    + [c for c in df.columns if c.startswith('GRAV_')]
-    + ['MANI_HEMOR', 'EPISTAXE', 'GENGIVO', 'METRO', 'PETEQUIAS',
-       'HEMATURA', 'SANGRAM', 'LACO_N', 'PLASMATICO', 'EVIDENCIA',
-       'PLAQ_MENOR', 'CON_FHD', 'CLINC_CHIK', 'HOSPITALIZ',
-       'TPAUTOCTO']
-    )
-    for col in FILL_COLS:
-        if col in df.columns and df[col].isna().any():
-            df[col] = df[col].fillna(2)
+    if 'NU_IDADE_N' in df.columns:
+        df['IDADE_TIPO'] = df['NU_IDADE_N'].apply(lambda x: decode_idade(x)[0])
+        df['IDADE_VALOR'] = df['NU_IDADE_N'].apply(lambda x: decode_idade(x)[1])
+        df['IDADE_ANOS'] = np.where(
+            df['IDADE_TIPO'] == 'anos', df['IDADE_VALOR'],
+            np.where(
+                df['IDADE_TIPO'] == 'meses',
+                (df['IDADE_VALOR'] / 12).round(1),
+                np.where(
+                    df['IDADE_TIPO'] == 'dias',
+                    (df['IDADE_VALOR'] / 365).round(3),
+                    None,
+                ),
+            ),
+        )
 
     colunas_drop = [
     "INDEX","TP_NOT","ID_AGRAVO","ID_REGIONA","ID_UNIDADE","ID_OCUPA_N",
@@ -223,9 +228,11 @@ def etl():
     df = df.drop(columns=[c for c in colunas_drop if c in df.columns])
 
 
-    df.to_parquet(f'{DADOS}/df_prata.parquet')
-    
-
+    output_path = output_path or DADOS / 'df_prata.parquet'
+    df.to_parquet(output_path, index=False)
     return df
 
-df = etl()
+
+if __name__ == '__main__':
+    result = etl()
+    print(f'Camada Prata gerada: {len(result):,} registros em {DADOS / "df_prata.parquet"}')

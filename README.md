@@ -42,7 +42,7 @@ Este projeto tem como objetivo fornecer um **painel integrado** para gestores de
   - Frameworks: FastAPI ou Flask  
   - Bibliotecas: Pandas, NumPy, scikit-learn, TensorFlow/PyTorch  
 - **Banco de Dados:** Oracle Database  
-  - Conexão via `cx_Oracle`  
+  - Conexão via `python-oracledb`
   - Procedures e triggers para cálculos de custos e criticidade  
 - **Visualização:** Power BI, Grafana ou D3.js  
 
@@ -124,6 +124,67 @@ Para alimentar os painéis e modelos de previsão, serão utilizadas as seguinte
 📌 **Observação:**  
 Os dados do **SINAN 2025 e 2026** já foram coletados e servirão como base inicial para os painéis históricos e de previsão.
 
+## 🥈 Camadas Prata e Ouro no Oracle
+
+Os arquivos `dados/df_prata.parquet` e `dados/df_ouro.parquet` são carregados nas tabelas Oracle `PRATA` e `OURO`. Crie as tabelas previamente no mesmo schema do usuário Oracle e mantenha as colunas com os mesmos nomes (sem distinção entre maiúsculas e minúsculas) e tipos compatíveis com os arquivos Parquet.
+
+O DDL inicial está em `sql/create_prata_ouro.sql`. Execute esse arquivo uma vez no schema correto pelo SQL Developer ou outra ferramenta Oracle antes da primeira carga. Ele cria as tabelas vazias e não apaga dados.
+
+Configure no `.env` as variáveis `DB_USER`, `DB_PASSWORD`, `DB_DSN`, `WALLET_DIR` e `WALLET_PASSWORD`. O diretório do wallet não deve ser publicado no repositório.
+
+Instale as dependências com `pip install -r requirements.txt`. Para regenerar as camadas com os arquivos Bronze, execute na raiz do projeto:
+
+```powershell
+python src\etl.py
+python src\gerar_gold.py
+```
+
+Antes de conectar ao banco, revise os indicadores de qualidade:
+
+```powershell
+python src\oracle_upload.py --review-only
+```
+
+Depois, execute a carga:
+
+```powershell
+python src\oracle_upload.py
+```
+
+Por padrão, o comando carrega as duas camadas. Para enviar somente uma, use `--layer prata` ou `--layer ouro`. Os nomes das tabelas podem ser alterados com `--table-prata` e `--table-ouro`.
+
+Antes da carga, o comando verifica os arquivos e resume nulos e duplicidades. A substituição de ambas as tabelas ocorre na mesma transação: se houver erro em qualquer camada, a transação é revertida. O script não cria tabelas nem executa `TRUNCATE`.
+
+## 🤖 Modelos preditivos (independentes do front-end)
+
+Os modelos ficam em `src/modelos/` e não dependem do `app.py` nem do Streamlit. A camada atual contém:
+
+- Séries mensais de casos confirmados pela classificação final, com previsão SARIMA de até 12 meses e validação temporal comparada a um baseline sazonal.
+- Séries diárias pela data de início dos sintomas (`DT_SIN_PRI`), com previsão de 30 dias. A preparação recusa dados com mais de 30 dias de atraso para não apresentar projeções atuais baseadas em notificações antigas.
+- Classificadores experimentais para dengue confirmada e hospitalização entre casos confirmados. Hospitalização é somente um indicador substituto de criticidade, não uma classificação clínica nem diagnóstico. O treino usa separação temporal e métricas de validação.
+
+Exemplo de uso a partir da raiz do projeto:
+
+```python
+import pandas as pd
+from src.modelos.pacientes import train_patient_models
+from src.modelos.series_temporais import (
+    forecast_monthly_cases,
+    prepare_monthly_cases,
+)
+
+prata = pd.read_parquet("dados/df_prata.parquet")
+mensal = prepare_monthly_cases(prata)
+previsao = forecast_monthly_cases(mensal, months=12)
+
+resultado = train_patient_models(prata)
+print(resultado.dengue_metrics)
+print(resultado.hospitalization_metrics)
+```
+
+Para o modelo diário, a base precisa ser atualizada: na verificação de 14/10/2026, `DT_SIN_PRI` chegava somente até 09/05/2026, portanto a previsão de 30 dias é corretamente bloqueada como desatualizada. A rotina de Prata preserva valores ausentes; regenere `df_prata.parquet` com `python src\etl.py` antes de treinar os classificadores, para não interpretar respostas ausentes como “não”.
+
+Na verificação atual, a série mensal tem 22 meses completos; o treino sazonal exige 24. Os classificadores devem ser avaliados com validação clínica e dados representativos antes de qualquer uso assistencial; seus escores não substituem diagnóstico ou decisão de profissionais de saúde.
 
 👨‍💻 **Equipe:** Projeto em desenvolvimento colaborativo  
 📅 **Status:** Planejamento inicial  
