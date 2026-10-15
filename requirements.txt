@@ -6,3 +6,6 @@ statsmodels>=0.14.0
 pmdarima>=2.1.0
 plotly>=6.0.0
 matplotlib>=3.10.0
+oracledb>=2.5.0
+pyarrow>=19.0.0
+python-dotenv>=1.0.0
