@@ -16,7 +16,7 @@ def con_sql():
             wallet_password=os.environ["WALLET_PASSWORD"],
         )
         with conn.cursor() as cur:
-            cur.execute("select 1 from dual")   # teste real: confirma que o banco respondeu
+            cur.execute("select 1 from dual")  
             cur.fetchone()
         return conn, "Conectado com sucesso"
 

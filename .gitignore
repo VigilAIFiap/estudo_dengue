@@ -182,5 +182,11 @@ cython_debug/
 
 # Ignorar dados brutos
 dados/
+dados_wallet_pendente_validacao/
 *.csv
-*.json
+
+# Frontend build artifacts and dependencies
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo

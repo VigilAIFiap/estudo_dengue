@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/*
+ * Tokens do Vigil. Bordas em vez de sombras; sombra só em camadas flutuantes.
+ * Raio por hierarquia: painéis 12px, controles 8px, selos 6px.
+ */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-sunken: #eef2f6;
+  --color-ink: #172033;
+  --color-ink-2: #3c4658;
+  --color-muted: #5b6678;
+  --color-faint: #8a94a6;
+  --color-line: #e2e8f0;
+  --color-line-strong: #cbd5e1;
+
+  --color-primary: #2563eb;
+  --color-primary-ink: #1d4ed8;
+  --color-primary-soft: #eaf1fe;
+  --color-teal: #0f9d9a;
+  --color-teal-soft: #e6f6f5;
+  --color-ghost: #a3adbd;
+
+  /* Criticidade: cor de preenchimento e cor de texto (contraste AA) */
+  --color-baixo: #16a34a;
+  --color-baixo-ink: #15803d;
+  --color-baixo-soft: #e9f7ee;
+  --color-medio: #eab308;
+  --color-medio-ink: #a16207;
+  --color-medio-soft: #fdf6dc;
+  --color-alto: #f97316;
+  --color-alto-ink: #c2410c;
+  --color-alto-soft: #feefe3;
+  --color-critico: #dc2626;
+  --color-critico-ink: #b91c1c;
+  --color-critico-soft: #fdeaea;
+  --color-semscore: #cbd5e1;
+
+  --radius-panel: 12px;
+  --radius-control: 8px;
+  --radius-chip: 6px;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-kpi: 1.875rem;
+  --text-kpi--line-height: 2.125rem;
+  --text-kpi--letter-spacing: -0.02em;
+  --text-title: 1.5rem;
+  --text-title--line-height: 2rem;
+  --text-title--letter-spacing: -0.015em;
+
+  --shadow-float: 0 12px 32px -12px rgb(23 32 51 / 0.22), 0 2px 6px -2px rgb(23 32 51 / 0.08);
+
+  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  @keyframes shimmer {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 1; }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: var(--color-primary-soft);
+  }
+}
+
+@utility num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "ss01";
+}
+
+/* Hachura para períodos parciais e intervalos sem dados */
+@utility hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(23 32 51 / 0.07) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
