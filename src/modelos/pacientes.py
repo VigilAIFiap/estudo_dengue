@@ -43,27 +43,12 @@ FEATURE_COLUMNS = (
 NUMERIC_FEATURES = ('IDADE_ANOS',)
 DENGUE_POSITIVE_LABELS = {
     'dengue',
-    'dengue_classico',
-    'dengue_hemorragico',
-    'sindrome_choque',
-    'sindrome_especial',
-    'obito_dengue',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '10',
+    'dengue_com_sinais_de_alarme',
+    'dengue_grave',
 }
 DENGUE_NEGATIVE_LABELS = {
     'descartado',
     'chikungunya',
-    'doenca_aguda_nao_especificada',
-    'zika',
-    '0',
-    '11',
-    '12',
-    '13',
 }
 
 
@@ -130,8 +115,12 @@ def _labels(df: pd.DataFrame) -> pd.Series:
     values = df['CLASSI_FIN'].astype('string').str.lower()
     raw_numeric = pd.to_numeric(values, errors='coerce')
     labels = pd.Series(pd.NA, index=df.index, dtype='Int64')
-    labels.loc[values.isin(DENGUE_POSITIVE_LABELS) | raw_numeric.isin([1, 2, 3, 4, 5, 10])] = 1
-    labels.loc[values.isin(DENGUE_NEGATIVE_LABELS) | raw_numeric.isin([0, 11, 12, 13])] = 0
+    labels.loc[
+        values.isin(DENGUE_POSITIVE_LABELS) | raw_numeric.isin([10, 11, 12])
+    ] = 1
+    labels.loc[
+        values.isin(DENGUE_NEGATIVE_LABELS) | raw_numeric.isin([5, 13])
+    ] = 0
     return labels
 
 

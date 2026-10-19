@@ -8,7 +8,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
-from modelos.pacientes import prepare_patient_features, train_patient_models
+from modelos.pacientes import _labels, prepare_patient_features, train_patient_models
 from modelos.series_temporais import (
     prepare_daily_cases,
     prepare_monthly_cases,
@@ -32,6 +32,34 @@ class ModelPreparationTests(unittest.TestCase):
         self.assertEqual(len(result), 15)
         self.assertEqual(int(result.sum()), len(dates) - 1)
         self.assertEqual(result.index[-1], pd.Timestamp('2026-03-01'))
+
+    def test_current_sinan_classification_codes_are_consistent(self):
+        labels = pd.Series(
+            [
+                'dengue',
+                'dengue_com_sinais_de_alarme',
+                'dengue_grave',
+                'descartado',
+                'inconclusivo',
+                'codigo_0_nao_documentado',
+                'chikungunya',
+            ]
+        )
+        targets = _labels(pd.DataFrame({'CLASSI_FIN': labels}))
+        self.assertEqual(targets.iloc[:4].tolist(), [1, 1, 1, 0])
+        self.assertTrue(targets.iloc[4:6].isna().all())
+        self.assertEqual(targets.iloc[6], 0)
+
+        raw_codes = pd.DataFrame(
+            {'DT_NOTIFIC': pd.to_datetime(['2025-01-01'] * 7),
+             'CLASSI_FIN': [10, 11, 12, 5, 8, 0, 13]}
+        )
+        series = prepare_monthly_cases(
+            raw_codes,
+            as_of=pd.Timestamp('2025-03-01'),
+            min_months=1,
+        )
+        self.assertEqual(int(series.loc['2025-01-01']), 3)
 
     def test_daily_series_rejects_stale_data(self):
         frame = pd.DataFrame(

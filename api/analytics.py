@@ -590,6 +590,7 @@ def insights_e_alertas(ds: Dataset, f: Filtros) -> dict:
     return {"insights": insights, "alertas": alertas}
 
 
+@lru_cache(maxsize=64)
 def previsao(ds: Dataset, f: Filtros) -> dict:
     """Executa o módulo src/modelos/series_temporais sem alterar suas regras."""
     from modelos.series_temporais import forecast_monthly_cases, prepare_monthly_cases, rolling_backtest
@@ -600,9 +601,9 @@ def previsao(ds: Dataset, f: Filtros) -> dict:
     base = {"data_referencia": referencia.date(), "historico": [], "previsao": [], "validacao": None}
     if entrada.empty:
         return {**base, "status": "indisponivel", "motivo": "Não há notificações no recorte selecionado."}
-    observada = prepare_monthly_cases(entrada, as_of=referencia, min_months=1)
-    base["historico"] = [{"mes": i.date(), "casos": int(v)} for i, v in observada.items()]
     try:
+        observada = prepare_monthly_cases(entrada, as_of=referencia, min_months=1)
+        base["historico"] = [{"mes": i.date(), "casos": int(v)} for i, v in observada.items()]
         mensal = prepare_monthly_cases(entrada, as_of=referencia)
     except ValueError as erro:
         return {**base, "status": "indisponivel", "motivo": str(erro)}

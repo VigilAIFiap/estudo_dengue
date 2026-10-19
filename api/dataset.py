@@ -1,8 +1,10 @@
 """Carga única e normalização das notificações SINAN para a API.
 
 Regras de leitura da base:
-- DENGBR25.csv: somente NU_ANO 2024 e 2025;
-- DENGBR26.csv: todas as linhas;
+- DENGBR23.csv: somente NU_ANO 2023 (fonte completa local);
+- DENGBR24.csv: somente NU_ANO 2024 (fonte completa local);
+- DENGBR25.csv: somente NU_ANO 2025;
+- DENGBR26.csv: somente NU_ANO 2026;
 - descarta DT_NOTIFIC inválida ou futura.
 
 A UF é derivada do código IBGE do município notificador (dimensão
@@ -103,52 +105,64 @@ def _cabecalho(arquivo: Path) -> list[str]:
     return pd.read_csv(arquivo, encoding="latin-1", nrows=0).columns.tolist()
 
 
-def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
-    hoje = (hoje or pd.Timestamp.today()).normalize()
-    arquivo_25 = data_dir / "DENGBR25.csv"
-    arquivo_26 = data_dir / "DENGBR26.csv"
-    arquivo_mun = data_dir / "municipios.csv"
-    for arquivo in (arquivo_25, arquivo_26, arquivo_mun):
-        if not arquivo.exists():
-            raise FileNotFoundError(f"Arquivo de dados ausente: {arquivo}")
-
-    leitura = dict(
-        sep=",",
+def _revisar_fonte(
+    arquivo: Path,
+    ano_esperado: int,
+    hoje: pd.Timestamp,
+) -> tuple[int, int, int, int]:
+    registros_validos = 0
+    outros_anos = 0
+    datas_invalidas = 0
+    datas_futuras = 0
+    for chunk in pd.read_csv(
+        arquivo,
         encoding="latin-1",
-        usecols=COLUNAS,
-        dtype={
-            "DT_NOTIFIC": str, "NU_ANO": str, "SG_UF_NOT": str,
-            "ID_MUNICIP": "float64", "HOSPITALIZ": "float32",
-            "CLASSI_FIN": "float32", "EVOLUCAO": "float32",
-        },
-    )
-    bruto_25 = pd.read_csv(arquivo_25, **leitura)
-    bruto_26 = pd.read_csv(arquivo_26, **leitura)
-    colunas_disponiveis = tuple(
-        sorted(set(_cabecalho(arquivo_25)) | set(_cabecalho(arquivo_26)))
-    )
+        usecols=["DT_NOTIFIC", "NU_ANO"],
+        dtype={"DT_NOTIFIC": str, "NU_ANO": str},
+        chunksize=250_000,
+    ):
+        year_mask = chunk["NU_ANO"].eq(str(ano_esperado))
+        outros_anos += int((~year_mask).sum())
+        selected = chunk.loc[year_mask]
+        dates = pd.to_datetime(
+            selected["DT_NOTIFIC"],
+            format="%Y-%m-%d",
+            errors="coerce",
+        )
+        mismatch = dates.notna() & dates.le(hoje) & dates.dt.year.ne(ano_esperado)
+        if mismatch.any():
+            raise ValueError(
+                f"{arquivo.name} contém registros com NU_ANO={ano_esperado} "
+                "e ano de DT_NOTIFIC diferente."
+            )
+        datas_invalidas += int(dates.isna().sum())
+        datas_futuras += int(dates.gt(hoje).sum())
+        registros_validos += int((dates.notna() & dates.le(hoje)).sum())
+    return registros_validos, outros_anos, datas_invalidas, datas_futuras
 
-    fora_do_ano = int((~bruto_25["NU_ANO"].isin(["2024", "2025"])).sum())
-    bruto = pd.concat(
-        [bruto_25.loc[bruto_25["NU_ANO"].isin(["2024", "2025"]), COLUNAS], bruto_26[COLUNAS]],
-        ignore_index=True,
-    )
-    datas = pd.to_datetime(bruto["DT_NOTIFIC"], format="%Y-%m-%d", errors="coerce")
-    invalidas = int(datas.isna().sum())
-    futuras = int((datas > hoje).sum())
-    validas = datas.notna() & (datas <= hoje)
-    bruto, datas = bruto.loc[validas], datas.loc[validas]
 
-    municipios = pd.read_csv(arquivo_mun)
-    municipios["id_municip"] = (municipios["codigo_ibge"].astype("int64") // 10).astype("int32")
+def _carregar_municipios(arquivo_municipios: Path) -> pd.DataFrame:
+    municipios = pd.read_csv(arquivo_municipios)
+    municipios["id_municip"] = (
+        municipios["codigo_ibge"].astype("int64") // 10
+    ).astype("int32")
     if municipios["id_municip"].duplicated().any():
         raise ValueError("municipios.csv possui códigos municipais repetidos.")
     municipios["uf"] = municipios["codigo_uf"].map(UF_SIGLA)
     municipios = municipios[
         ["id_municip", "codigo_ibge", "nome", "uf", "latitude", "longitude", "capital"]
     ].set_index("id_municip")
+    return municipios
 
-    id_municip = bruto["ID_MUNICIP"]
+
+def _normalizar_notificacoes(
+    bruto: pd.DataFrame,
+    datas: pd.Series,
+    municipios: pd.DataFrame,
+) -> pd.DataFrame:
+    if bruto.empty:
+        return pd.DataFrame()
+    id_municip = pd.to_numeric(bruto["ID_MUNICIP"], errors="coerce")
     sem_municipio = id_municip.isna() | ~id_municip.isin(municipios.index)
     if sem_municipio.any():
         raise ValueError(
@@ -156,7 +170,6 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
         )
     id_municip = id_municip.astype("int32")
 
-    # Calcula a semana epidemiológica nas datas distintas (poucas centenas).
     datas_unicas = pd.Series(datas.unique())
     ano_u, semana_u, inicio_u = semana_epidemiologica(datas_unicas)
     posicao = pd.Index(datas_unicas).get_indexer(datas)
@@ -183,22 +196,180 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
     )
     df["confirmado"] = np.isin(classi, CONFIRMADOS)
     df["grave"] = np.isin(classi, (11, 12))
-    df["obito_dengue"] = evol == 2  # definição da camada Ouro (gerar_gold.py)
+    df["obito_dengue"] = evol == 2
     df["obito_investigacao"] = evol == 4
     df["hospitalizado"] = hosp == 1
+    return df
 
+
+def _montar_dataset(
+    bruto: pd.DataFrame,
+    datas: pd.Series,
+    arquivo_municipios: Path,
+    arquivos: tuple[tuple[str, int, float], ...],
+    linhas_descartadas: dict[str, int],
+    colunas_disponiveis: tuple[str, ...],
+) -> Dataset:
+    if bruto.empty:
+        raise ValueError("A fonte não contém notificações com data válida.")
+    municipios = _carregar_municipios(arquivo_municipios)
+    notificacoes = _normalizar_notificacoes(bruto, datas, municipios)
+    return Dataset(
+        notificacoes=notificacoes,
+        municipios=municipios,
+        carregado_em=datetime.now(timezone.utc),
+        arquivos=arquivos,
+        linhas_descartadas=linhas_descartadas,
+        colunas_disponiveis=colunas_disponiveis,
+    )
+
+
+def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
+    hoje = (hoje or pd.Timestamp.today()).normalize()
+    arquivo_23 = data_dir / "DENGBR23.csv"
+    arquivo_24 = data_dir / "DENGBR24.csv"
+    arquivo_25 = data_dir / "DENGBR25.csv"
+    arquivo_26 = data_dir / "DENGBR26.csv"
+    arquivo_mun = data_dir / "municipios.csv"
+    for arquivo in (arquivo_23, arquivo_24, arquivo_25, arquivo_26, arquivo_mun):
+        if not arquivo.exists():
+            raise FileNotFoundError(f"Arquivo de dados ausente: {arquivo}")
+
+    colunas_disponiveis = tuple(
+        sorted(
+            set(_cabecalho(arquivo_23))
+            | set(_cabecalho(arquivo_24))
+            | set(_cabecalho(arquivo_25))
+            | set(_cabecalho(arquivo_26))
+        )
+    )
+
+    municipios = _carregar_municipios(arquivo_mun)
+    sources = (
+        (arquivo_23, 2023),
+        (arquivo_24, 2024),
+        (arquivo_25, 2025),
+        (arquivo_26, 2026),
+    )
+    file_signatures = {
+        arquivo: (arquivo.stat().st_size, arquivo.stat().st_mtime_ns)
+        for arquivo, _ in sources
+    }
+    reviewed = {
+        arquivo: _revisar_fonte(arquivo, year, hoje)
+        for arquivo, year in sources
+    }
+    expected_rows = sum(counts[0] for counts in reviewed.values())
+    if expected_rows == 0:
+        raise ValueError("As fontes não contêm notificações com data válida.")
+
+    uf_categories = tuple(UF_SIGLA.values())
+    uf_codes = {value: code for code, value in enumerate(uf_categories)}
+    arrays = {
+        "data": np.empty(expected_rows, dtype="datetime64[ns]"),
+        "mes": np.empty(expected_rows, dtype="datetime64[ns]"),
+        "ano_epi": np.empty(expected_rows, dtype="int16"),
+        "semana_epi": np.empty(expected_rows, dtype="int16"),
+        "inicio_semana": np.empty(expected_rows, dtype="datetime64[ns]"),
+        "id_municip": np.empty(expected_rows, dtype="int32"),
+        "uf_codes": np.empty(expected_rows, dtype="int8"),
+        "classi": np.empty(expected_rows, dtype="int8"),
+        "evolucao": np.empty(expected_rows, dtype="int8"),
+        "hospitaliz": np.empty(expected_rows, dtype="int8"),
+        "confirmado": np.empty(expected_rows, dtype=bool),
+        "grave": np.empty(expected_rows, dtype=bool),
+        "obito_dengue": np.empty(expected_rows, dtype=bool),
+        "obito_investigacao": np.empty(expected_rows, dtype=bool),
+        "hospitalizado": np.empty(expected_rows, dtype=bool),
+    }
+    leitura = dict(
+        sep=",",
+        encoding="latin-1",
+        usecols=COLUNAS,
+        dtype={
+            "DT_NOTIFIC": str,
+            "NU_ANO": str,
+            "SG_UF_NOT": str,
+            "ID_MUNICIP": "float64",
+            "HOSPITALIZ": "float32",
+            "CLASSI_FIN": "float32",
+            "EVOLUCAO": "float32",
+        },
+    )
+    cursor = 0
+    for arquivo, year in sources:
+        for chunk in pd.read_csv(arquivo, chunksize=250_000, **leitura):
+            selected = chunk.loc[chunk["NU_ANO"].eq(str(year)), COLUNAS]
+            if selected.empty:
+                continue
+
+            datas = pd.to_datetime(
+                selected["DT_NOTIFIC"],
+                format="%Y-%m-%d",
+                errors="coerce",
+            )
+            validas = datas.notna() & datas.le(hoje)
+            if not validas.any():
+                continue
+            normalizadas = _normalizar_notificacoes(
+                selected.loc[validas],
+                datas.loc[validas],
+                municipios,
+            )
+            end = cursor + len(normalizadas)
+            for column in (
+                "data", "mes", "ano_epi", "semana_epi", "inicio_semana",
+                "id_municip", "classi", "evolucao", "hospitaliz",
+                "confirmado", "grave", "obito_dengue",
+                "obito_investigacao", "hospitalizado",
+            ):
+                arrays[column][cursor:end] = normalizadas[column].to_numpy()
+            uf = normalizadas["uf"].astype("string").map(uf_codes)
+            if uf.isna().any():
+                raise ValueError("A dimensão municipal contém uma UF não reconhecida.")
+            arrays["uf_codes"][cursor:end] = uf.to_numpy(dtype="int8")
+            cursor = end
+
+    changed_sources = [
+        arquivo.name
+        for arquivo, signature in file_signatures.items()
+        if (arquivo.stat().st_size, arquivo.stat().st_mtime_ns) != signature
+    ]
+    if changed_sources:
+        raise RuntimeError(
+            "Arquivos de origem foram modificados durante a leitura: "
+            + ", ".join(changed_sources)
+        )
+    if cursor != expected_rows:
+        raise RuntimeError(
+            f"A leitura em blocos esperava {expected_rows:,} linhas válidas, "
+            f"mas processou {cursor:,}."
+        )
+
+    arrays["uf"] = pd.Categorical.from_codes(
+        arrays.pop("uf_codes"),
+        categories=uf_categories,
+    )
+    df = pd.DataFrame(arrays, copy=False)
     arquivos = tuple(
-        (a.name, a.stat().st_size, a.stat().st_mtime) for a in (arquivo_25, arquivo_26, arquivo_mun)
+        (arquivo.name, arquivo.stat().st_size, arquivo.stat().st_mtime)
+        for arquivo, _ in sources
+    ) + ((arquivo_mun.name, arquivo_mun.stat().st_size, arquivo_mun.stat().st_mtime),)
+    descartadas = {
+        f"{arquivo.stem} com NU_ANO diferente de {year}": reviewed[arquivo][1]
+        for arquivo, year in sources
+    }
+    descartadas["DT_NOTIFIC inválida"] = sum(
+        counts[2] for counts in reviewed.values()
+    )
+    descartadas["DT_NOTIFIC posterior à data de processamento"] = sum(
+        counts[3] for counts in reviewed.values()
     )
     return Dataset(
         notificacoes=df,
         municipios=municipios,
         carregado_em=datetime.now(timezone.utc),
         arquivos=arquivos,
-        linhas_descartadas={
-            "DENGBR25 com NU_ANO fora de 2024–2025": fora_do_ano,
-            "DT_NOTIFIC inválida": invalidas,
-            "DT_NOTIFIC posterior à data de processamento": futuras,
-        },
+        linhas_descartadas=descartadas,
         colunas_disponiveis=colunas_disponiveis,
     )

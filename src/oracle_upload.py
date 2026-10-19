@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from config import DADOS
+from config import PROCESSED
 from con_db import con_sql
 
 
@@ -36,12 +36,15 @@ def review_dataframe(layer: str, df: pd.DataFrame) -> list[str]:
 
     if layer == 'prata':
         required = {
-            'DT_NOTIFIC', 'ID_MUNICIP', 'UF', 'MUNICIPIO', 'codigo_ibge',
+            'dt_notific', 'id_municip', 'uf', 'municipio', 'codigo_ibge',
         }
-        missing = sorted(required.difference(df.columns))
+        normalized = {str(column).lower(): column for column in df.columns}
+        missing = sorted(required.difference(normalized))
         if missing:
             blockers.append(f'colunas esperadas ausentes: {missing}')
-        elif df['MUNICIPIO'].isna().all() or df['codigo_ibge'].isna().all():
+        elif df[normalized['municipio']].isna().all() or df[
+            normalized['codigo_ibge']
+        ].isna().all():
             blockers.append(
                 'vínculo com municípios vazio; regenere a camada com src\\etl.py'
             )
@@ -262,7 +265,7 @@ def main() -> None:
     blockers = []
     for layer in selected:
         filename, _ = LAYERS[layer]
-        path = DADOS / filename
+        path = PROCESSED / filename
         if not path.is_file():
             raise FileNotFoundError(
                 f'Arquivo da camada {layer} não encontrado: {path}. '

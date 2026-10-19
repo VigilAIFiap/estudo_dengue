@@ -7,6 +7,7 @@ Executar a partir da raiz do projeto:
 from __future__ import annotations
 
 import io
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
@@ -26,14 +27,30 @@ from .dataset import CLASSIFICACAO, CONFIRMADOS, UF_NOME, Dataset, carregar
 load_dotenv()
 
 RAIZ = Path(__file__).resolve().parents[1]
-DATA_DIR = Path(os.environ.get("DENGUE_DATA_DIR", RAIZ / "dados"))
+DATA_DIR = Path(os.environ.get("DENGUE_DATA_DIR", RAIZ / "dados" / "raw"))
 ASSIST_MODELO = os.environ.get("ASSIST_MODEL", "claude-sonnet-5-5")
 ORIGENS = [o for o in os.environ.get("API_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "csv").strip().lower()
+LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.dataset = carregar(DATA_DIR)
+    if DATA_SOURCE == "csv":
+        app.state.dataset = carregar(DATA_DIR)
+    elif DATA_SOURCE == "oracle":
+        from .oracle_dataset import carregar_oracle
+
+        app.state.dataset = carregar_oracle(DATA_DIR / "municipios.csv")
+    else:
+        raise RuntimeError(
+            f"DATA_SOURCE inválido: {DATA_SOURCE!r}. Use 'csv' ou 'oracle'."
+        )
+    LOGGER.info(
+        "API iniciada com fonte %s e %s notificações em memória.",
+        DATA_SOURCE,
+        f"{len(app.state.dataset.notificacoes):,}",
+    )
     yield
 
 

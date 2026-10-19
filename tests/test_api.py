@@ -36,11 +36,12 @@ def _linhas(data: str, ano: str, mun: str, n: int, hosp="2", classi="10", evol="
 
 
 def criar_base(pasta: Path) -> None:
+    b23 = CABECALHO
     b25 = (
         CABECALHO
         + _linhas("2025-01-06", "2025", "355030", 40)
         + _linhas("2025-01-07", "2025", "110020", 10, hosp="1", classi="12", evol="2")
-        + _linhas("2025-01-08", "2026", "355030", 99)  # NU_ANO fora de 2024–2025: descartada
+        + _linhas("2025-01-08", "2026", "355030", 99)  # NU_ANO fora do arquivo anual: descartada
         + _linhas("2025-02-03", "2025", "530010", 5, classi="", evol="")
     )
     b26 = (
@@ -50,6 +51,8 @@ def criar_base(pasta: Path) -> None:
         + _linhas("2026-01-07", "2026", "530010", 3, classi="8")
         + _linhas("2099-01-01", "2026", "355030", 7)  # data futura: descartada
     )
+    (pasta / "DENGBR23.csv").write_text(b23, encoding="latin-1")
+    (pasta / "DENGBR24.csv").write_text(CABECALHO, encoding="latin-1")
     (pasta / "DENGBR25.csv").write_text(b25, encoding="latin-1")
     (pasta / "DENGBR26.csv").write_text(b26, encoding="latin-1")
     (pasta / "municipios.csv").write_text(MUNICIPIOS, encoding="utf-8")
@@ -76,10 +79,55 @@ class SemanaEpidemiologicaTests(unittest.TestCase):
 
 
 class CargaTests(Base):
+    def test_usa_apenas_linhas_de_2023_da_fonte_completa(self):
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            criar_base(directory)
+            (directory / "DENGBR23.csv").write_text(
+                CABECALHO
+                + _linhas("2023-01-06", "2023", "355030", 10)
+                + _linhas("2024-01-06", "2024", "355030", 2),
+                encoding="latin-1",
+            )
+            (directory / "DENGBR24.csv").write_text(
+                CABECALHO
+                + _linhas("2024-02-06", "2024", "355030", 4)
+                + _linhas("2023-12-31", "2023", "355030", 1),
+                encoding="latin-1",
+            )
+            dataset = carregar(directory, hoje=pd.Timestamp("2026-10-17"))
+        rows_2023 = dataset.notificacoes[
+            dataset.notificacoes["data"].dt.year == 2023
+        ]
+        rows_2024 = dataset.notificacoes[
+            dataset.notificacoes["data"].dt.year == 2024
+        ]
+        self.assertEqual(len(rows_2023), 10)
+        self.assertEqual(len(rows_2024), 4)
+        self.assertEqual(
+            dataset.linhas_descartadas[
+                "DENGBR23 com NU_ANO diferente de 2023"
+            ],
+            2,
+        )
+        self.assertEqual(
+            dataset.linhas_descartadas[
+                "DENGBR24 com NU_ANO diferente de 2024"
+            ],
+            1,
+        )
+
     def test_aplica_regras_do_app_e_deriva_uf_do_municipio(self):
         df = self.ds.notificacoes
         self.assertEqual(len(df), 40 + 10 + 5 + 80 + 5 + 3)
-        self.assertEqual(self.ds.linhas_descartadas["DENGBR25 com NU_ANO fora de 2024–2025"], 99)
+        self.assertEqual(
+            self.ds.linhas_descartadas["DENGBR23 com NU_ANO diferente de 2023"],
+            0,
+        )
+        self.assertEqual(
+            self.ds.linhas_descartadas["DENGBR25 com NU_ANO diferente de 2025"],
+            99,
+        )
         self.assertEqual(self.ds.linhas_descartadas["DT_NOTIFIC posterior à data de processamento"], 7)
         self.assertEqual(set(df.loc[df["id_municip"] == 110020, "uf"]), {"RO"})
         self.assertEqual(set(df.loc[df["id_municip"] == 530010, "uf"]), {"DF"})
@@ -128,6 +176,56 @@ class AnaliticaTests(Base):
         self.assertEqual(r["status"], "indisponivel")
         self.assertIn("24 meses", r["motivo"])
         self.assertEqual(r["previsao"], [])
+
+    def test_previsao_reutiliza_modelo_para_mesmo_dataset_e_filtros(self):
+        from modelos import series_temporais
+
+        a.previsao.cache_clear()
+        mensal = pd.Series(
+            range(24),
+            index=pd.date_range("2024-01-01", periods=24, freq="MS"),
+        )
+        tabela = pd.DataFrame(
+            {
+                "PREVISAO": [10],
+                "LIMITE_INFERIOR_95": [5.0],
+                "LIMITE_SUPERIOR_95": [15.0],
+            },
+            index=pd.date_range("2026-01-01", periods=1, freq="MS"),
+        )
+        validacao = {
+            "model_mae": 1.0,
+            "seasonal_naive_mae": 2.0,
+            "model_rmse": 1.0,
+            "seasonal_naive_rmse": 2.0,
+            "beats_seasonal_naive": True,
+            "test_observations": 9,
+        }
+        try:
+            with (
+                patch.object(
+                    series_temporais,
+                    "prepare_monthly_cases",
+                    return_value=mensal,
+                ),
+                patch.object(
+                    series_temporais,
+                    "forecast_monthly_cases",
+                    return_value=tabela,
+                ) as forecast,
+                patch.object(
+                    series_temporais,
+                    "rolling_backtest",
+                    return_value=validacao,
+                ),
+            ):
+                first = a.previsao(self.ds, a.Filtros())
+                second = a.previsao(self.ds, a.Filtros())
+            self.assertEqual(first, second)
+            self.assertEqual(first["status"], "disponivel")
+            self.assertEqual(forecast.call_count, 1)
+        finally:
+            a.previsao.cache_clear()
 
     def test_pacientes_indisponivel_sem_colunas_clinicas(self):
         r = a.pacientes_status(self.ds)

@@ -37,7 +37,7 @@ export default function PrevisoesPage() {
             subtitulo={`Casos confirmados por mês de notificação até ${fmtData(p.data_referencia)}; o mês em curso é descartado`}
             rodape={
               p.historico[0] &&
-              `${fmtMes(p.historico[0].mes)} é o primeiro mês da base e começa em 29/12: ele entra na série do modelo mesmo sendo parcial.`
+              `${fmtMes(p.historico[0].mes)} é o primeiro mês disponível na fonte carregada.`
             }
           >
             <ForecastChart dados={p} />
@@ -53,7 +53,7 @@ export default function PrevisoesPage() {
                 ["Data de referência", `${fmtData(p.data_referencia)}, última notificação carregada.`],
                 [
                   "Definição de caso",
-                  "O módulo conta CLASSI_FIN 1–5 e 10. Pela ficha SINAN atual, 5 é descartado e 11–12 são dengue com alarme e grave: a série do modelo difere dos confirmados exibidos no restante da plataforma.",
+                  "O modelo conta somente CLASSI_FIN 10, 11 e 12: dengue, dengue com sinais de alarme e dengue grave, conforme os confirmados exibidos no restante da plataforma.",
                 ],
               ].map(([k, v]) => (
                 <div key={k}>

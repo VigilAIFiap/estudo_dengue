@@ -130,34 +130,54 @@ class DataLayerTests(unittest.TestCase):
             pd.DataFrame(
                 {
                     'DT_NOTIFIC': pd.to_datetime(
-                        ['2025-01-03', '2025-01-12']
+                        [
+                            '2023-01-03',
+                            '2025-01-03',
+                            '2025-01-12',
+                            '2025-01-20',
+                            '2099-01-01',
+                        ]
                     ),
-                    'ID_MUNICIP': pd.Series([355030, 355030], dtype='Int64'),
-                    'UF': ['35', '35'],
-                    'MUNICIPIO': ['355030', 'Sao Paulo'],
-                    'CLASSI_FIN': ['dengue', 'descartado'],
-                    'EVOLUCAO': [None, 'obito_dengue'],
-                    'HOSPITALIZ': ['1', '2'],
+                    'ID_MUNICIP': pd.Series(
+                        [355030] * 5, dtype='Int64'
+                    ),
+                    'UF': ['35'] * 5,
+                    'MUNICIPIO': ['Sao Paulo'] * 5,
+                    'CLASSI_FIN': [
+                        'dengue', 'dengue', 'descartado',
+                        'dengue_grave', 'dengue',
+                    ],
+                    'EVOLUCAO': ['cura', None, 'obito_dengue', None, None],
+                    'HOSPITALIZ': ['2', '1', '2', '2', '1'],
+                    'NDUPLIC_N': [None, None, None, 2, None],
                 }
             ).to_parquet(input_path, index=False)
 
-            with patch.object(gerar_gold, 'DADOS', directory):
+            with patch.object(gerar_gold, 'RAW', directory):
                 result = gerar_gold.gold_acumulado_municipio(
                     input_path=input_path,
                     output_path=output_path,
+                    as_of=pd.Timestamp('2026-10-19'),
                 )
 
-            self.assertEqual(len(result), 1)
+            self.assertEqual(len(result), 2)
             self.assertFalse(
                 result.duplicated(['MES_REFERENCIA', 'ID_MUNICIP']).any()
             )
-            row = result.iloc[0]
-            self.assertEqual(row['MUNICIPIO'], 'Sao Paulo')
-            self.assertEqual(row['UF'], '35')
-            self.assertEqual(int(row['NOTIFICACOES']), 2)
-            self.assertEqual(int(row['CASOS_DENGUE']), 1)
-            self.assertEqual(int(row['OBITOS_DENGUE']), 1)
-            self.assertEqual(int(row['HOSPITALIZACOES']), 1)
+            row_2023 = result.loc[
+                result['MES_REFERENCIA'].eq(pd.Timestamp('2023-01-01'))
+            ].iloc[0]
+            self.assertEqual(int(row_2023['NOTIFICACOES']), 1)
+            self.assertEqual(int(row_2023['CASOS_DENGUE']), 1)
+            row_2025 = result.loc[
+                result['MES_REFERENCIA'].eq(pd.Timestamp('2025-01-01'))
+            ].iloc[0]
+            self.assertEqual(row_2025['MUNICIPIO'], 'Sao Paulo')
+            self.assertEqual(row_2025['UF'], '35')
+            self.assertEqual(int(row_2025['NOTIFICACOES']), 2)
+            self.assertEqual(int(row_2025['CASOS_DENGUE']), 1)
+            self.assertEqual(int(row_2025['OBITOS_DENGUE']), 1)
+            self.assertEqual(int(row_2025['HOSPITALIZACOES']), 1)
 
 
 if __name__ == '__main__':

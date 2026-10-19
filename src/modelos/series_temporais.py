@@ -4,8 +4,11 @@ import numpy as np
 import pandas as pd
 
 
-DENGUE_LABELS = {'dengue', 'dengue_classico', 'dengue_hemorragico',
-                 'sindrome_choque', 'sindrome_especial', 'obito_dengue'}
+DENGUE_LABELS = {
+    'dengue',
+    'dengue_com_sinais_de_alarme',
+    'dengue_grave',
+}
 
 
 def _confirmed_dengue_mask(df: pd.DataFrame) -> pd.Series:
@@ -13,7 +16,7 @@ def _confirmed_dengue_mask(df: pd.DataFrame) -> pd.Series:
         raise ValueError('A camada precisa conter CLASSI_FIN para contar casos confirmados.')
     labels = df['CLASSI_FIN'].astype('string').str.lower()
     numeric = pd.to_numeric(labels, errors='coerce')
-    return labels.isin(DENGUE_LABELS) | numeric.isin([1, 2, 3, 4, 5, 10])
+    return labels.isin(DENGUE_LABELS) | numeric.isin([10, 11, 12])
 
 
 def _prepare_daily_cases(

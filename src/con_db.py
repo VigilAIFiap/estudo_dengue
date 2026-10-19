@@ -2,10 +2,18 @@ import os
 import oracledb
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv() #carrega as informações do env
 
 def con_sql():
-    
+    """ Essa função tenta estabelecer uma concexão com o banco criado na oracle com as credenciais do env e as inforamções
+    do wallet
+
+    Parametros:
+        None
+
+    Retorno:
+        Retorna o status da conexão e/ou a mensagem do possivel erro
+    """
     try:
         conn = oracledb.connect(
             user=os.environ["DB_USER"],

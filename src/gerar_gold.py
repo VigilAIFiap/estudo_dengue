@@ -1,23 +1,27 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
-from config import DADOS
+from config import PROCESSED, RAW
 
 
 DENGUE_CLASSIFICATIONS = {
-    'dengue_classico',
-    'dengue_hemorragico',
-    'sindrome_choque',
-    'sindrome_especial',
     'dengue',
-    'obito_dengue',
+    'dengue_com_sinais_de_alarme',
+    'dengue_grave',
 }
 
 
-def gold_acumulado_municipio(input_path=None, output_path=None):
-    input_path = input_path or DADOS / 'df_prata.parquet'
-    output_path = output_path or DADOS / 'df_ouro.parquet'
+def gold_acumulado_municipio(
+    input_path=None,
+    output_path=None,
+    municipalities_path=None,
+    as_of=None,
+):
+    input_path = input_path or PROCESSED / 'df_prata.parquet'
+    output_path = output_path or PROCESSED / 'df_ouro.parquet'
     df = pd.read_parquet(input_path)
 
     required = {'DT_NOTIFIC', 'ID_MUNICIP'}
@@ -27,10 +31,26 @@ def gold_acumulado_municipio(input_path=None, output_path=None):
 
     df['DT_NOTIFIC'] = pd.to_datetime(df['DT_NOTIFIC'], errors='coerce')
     df['ID_MUNICIP'] = pd.to_numeric(df['ID_MUNICIP'], errors='coerce').astype('Int64')
-    df = df.dropna(subset=['DT_NOTIFIC', 'ID_MUNICIP']).copy()
+    reference_date = pd.Timestamp(as_of or pd.Timestamp.today()).normalize()
+    valid_date = df['DT_NOTIFIC'].notna() & df['DT_NOTIFIC'].le(reference_date)
+    valid_municipality = df['ID_MUNICIP'].notna()
+    discarded_dates = int((~valid_date).sum())
+    discarded_municipalities = int((valid_date & ~valid_municipality).sum())
+    df = df.loc[valid_date & valid_municipality].copy()
+    print(
+        f'Ouro: {discarded_dates:,} registros com data inválida/futura e '
+        f'{discarded_municipalities:,} sem município excluídos.'
+    )
+    if 'NDUPLIC_N' in df:
+        duplicates_to_exclude = (
+            pd.to_numeric(df['NDUPLIC_N'], errors='coerce').eq(2).fillna(False)
+        )
+        excluded = int(duplicates_to_exclude.sum())
+        df = df.loc[~duplicates_to_exclude].copy()
+        print(f'Ouro: {excluded:,} registros marcados NDUPLIC_N=2 excluídos das métricas.')
     df['MES_REFERENCIA'] = df['DT_NOTIFIC'].dt.to_period('M').dt.to_timestamp()
 
-    municipios = pd.read_csv(DADOS / 'municipios.csv')
+    municipios = pd.read_csv(municipalities_path or RAW / 'municipios.csv')
     municipios['codigo_ibge'] = pd.to_numeric(
         municipios['codigo_ibge'], errors='raise'
     ).astype('int64')
@@ -105,10 +125,12 @@ def gold_acumulado_municipio(input_path=None, output_path=None):
         ]
     ]
 
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df_ouro.to_parquet(output_path, index=False)
     return df_ouro
 
 
 if __name__ == '__main__':
     result = gold_acumulado_municipio()
-    print(f'Camada Ouro gerada: {len(result):,} registros em {DADOS / "df_ouro.parquet"}')
+    print(f'Camada Ouro gerada: {len(result):,} registros em {PROCESSED / "df_ouro.parquet"}')
