@@ -107,12 +107,163 @@ class EtlTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, 'read_data_bronze.py'):
                 etl.etl(input_dir=Path(temporary_directory))
 
-    def test_reader_uses_full_2023_2024_csv_and_oracle_2025_2026(self):
-        class Cursor:
-            description = [('QUERY',)]
+    def test_chunked_silver_etl_matches_full_dataframe_transformation(self):
+        frames = tuple(
+            pd.DataFrame(
+                {
+                    'DT_NOTIFIC': [f'20{year}-01-04', f'20{year}-01-05'],
+                    'ID_MUNICIP': [355030, 355030],
+                    'CLASSI_FIN': [10, 12],
+                    'EVOLUCAO': [1, 2],
+                    'HOSPITALIZ': [1, 2],
+                    **(
+                        {'NU_IDADE_N': [4010, 4020]}
+                        if year in (23, 25)
+                        else {}
+                    ),
+                }
+            )
+            for year in (23, 24, 25, 26)
+        )
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            municipalities = directory / 'municipios.csv'
+            municipalities.write_text(
+                'codigo_ibge,nome,codigo_uf,latitude,longitude,capital\n'
+                '3550308,Sao Paulo,35,-23.55,-46.63,1\n',
+                encoding='utf-8',
+            )
+            input_dir = directory / 'processed'
+            input_dir.mkdir()
+            for year, frame in zip((23, 24, 25, 26), frames):
+                frame.to_parquet(
+                    input_dir / f'df_bronze_{year}.parquet',
+                    index=False,
+                )
+            expected = etl.etl(
+                bronze_data=frames,
+                municipalities_path=municipalities,
+                output_path=directory / 'expected.parquet',
+            )
+            count = etl.etl_parquet_batches(
+                input_dir=input_dir,
+                municipalities_path=municipalities,
+                output_path=directory / 'streamed.parquet',
+                batch_size=1,
+            )
+            actual = pd.read_parquet(directory / 'streamed.parquet')
 
+        self.assertEqual(count, 8)
+        pd.testing.assert_frame_equal(actual, expected, check_dtype=False)
+
+    def test_reader_uses_all_four_local_annual_csvs(self):
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            sources = {}
+            for year in (23, 24, 25, 26):
+                source = directory / f'DENGBR{year}.csv'
+                other_date, other_year = (
+                    ('2024-12-31', '2024')
+                    if year == 23
+                    else ('2023-12-31', '2023')
+                )
+                source.write_text(
+                    'DT_NOTIFIC,NU_ANO\n'
+                    f'20{year}-01-01,20{year}\n'
+                    f'20{year}-01-02,20{year}\n'
+                    f'{other_date},{other_year}\n',
+                    encoding='utf-8',
+                )
+                sources[year] = source
+            with (
+                patch.object(
+                    read_data_bronze,
+                    'CSV_SOURCES',
+                    sources,
+                ),
+                patch.object(read_data_bronze, 'PROCESSED', directory / 'processed'),
+            ):
+                counts = read_data_bronze.read_data()
+
+            self.assertEqual(counts, {23: 2, 24: 2, 25: 2, 26: 2})
+            self.assertTrue(
+                all(
+                    (directory / 'processed' / f'df_bronze_{year}.parquet').is_file()
+                    for year in (23, 24, 25, 26)
+                )
+            )
+            for year in (23, 24, 25, 26):
+                saved = pd.read_parquet(
+                    directory / 'processed' / f'df_bronze_{year}.parquet'
+                )
+                self.assertEqual(len(saved), 2)
+                self.assertEqual(set(saved['NU_ANO']), {f'20{year}'})
+
+    def test_reader_preserves_existing_parquets_if_a_source_is_missing(self):
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            processed = directory / 'processed'
+            processed.mkdir()
+            for year in (23, 24, 25, 26):
+                (processed / f'df_bronze_{year}.parquet').write_bytes(
+                    f'old-{year}'.encode()
+                )
+            sources = {}
+            for year in (23, 24, 25):
+                source = directory / f'DENGBR{year}.csv'
+                source.write_text(
+                    'DT_NOTIFIC,NU_ANO\n'
+                    f'20{year}-01-01,20{year}\n',
+                    encoding='utf-8',
+                )
+                sources[year] = source
+            sources[26] = directory / 'missing.csv'
+            with (
+                patch.object(read_data_bronze, 'CSV_SOURCES', sources),
+                patch.object(read_data_bronze, 'PROCESSED', processed),
+            ):
+                with self.assertRaisesRegex(FileNotFoundError, 'Fontes CSV'):
+                    read_data_bronze.read_data()
+            for year in (23, 24, 25, 26):
+                self.assertEqual(
+                    (processed / f'df_bronze_{year}.parquet').read_bytes(),
+                    f'old-{year}'.encode(),
+                )
+
+    def test_staging_loader_validates_monthly_values_without_touching_production(self):
+        prata = pd.DataFrame(
+            {
+                'DT_NOTIFIC': pd.to_datetime(
+                    ['2025-01-02', '2025-01-15', '2025-02-01']
+                ),
+                'ID_MUNICIP': [355030, 355030, 110020],
+                'UF': ['35', '35', '11'],
+                'MUNICIPIO': ['Sao Paulo', 'Sao Paulo', 'Porto Velho'],
+                'CODIGO_IBGE': [3550308, 3550308, 1100205],
+                'CLASSI_FIN': ['dengue', 'descartado', 'dengue_grave'],
+                'EVOLUCAO': ['obito_dengue', 'cura', 'cura'],
+                'HOSPITALIZ': [1, 2, 1],
+            }
+        )
+        ouro = pd.DataFrame(
+            {
+                'MES_REFERENCIA': pd.to_datetime(
+                    ['2025-01-01', '2025-02-01']
+                ),
+                'ID_MUNICIP': [355030, 110020],
+                'UF': ['35', '11'],
+                'MUNICIPIO': ['Sao Paulo', 'Porto Velho'],
+                'NOTIFICACOES': [2, 1],
+                'CASOS_DENGUE': [1, 1],
+                'OBITOS_DENGUE': [1, 0],
+                'HOSPITALIZACOES': [1, 1],
+            }
+        )
+
+        class Cursor:
             def __init__(self):
                 self.rows = []
+                self.executed = []
 
             def __enter__(self):
                 return self
@@ -120,129 +271,92 @@ class EtlTests(unittest.TestCase):
             def __exit__(self, *_):
                 return False
 
-            def execute(self, query):
-                self.rows = [(query,)]
+            def execute(self, query, **binds):
+                self.executed.append(query)
+                if 'FROM user_tab_columns' in query:
+                    name = binds['table_name']
+                    frame = {'PRATA_STG': prata, 'OURO_STG': ouro}[name]
+                    self.rows = [
+                        (str(column).upper(), 'Y', None)
+                        for column in frame.columns
+                    ]
+                elif query.startswith('SELECT COUNT(*) FROM PRATA_STG'):
+                    self.rows = [(len(prata),)]
+                elif query.startswith('SELECT COUNT(*) FROM OURO_STG'):
+                    self.rows = [(len(ouro),)]
+                elif 'GROUP BY TRUNC(DT_NOTIFIC' in query:
+                    quality = oracle_upload._expected_monthly_quality(
+                        'prata', prata
+                    )
+                    self.rows = [(month, *values) for month, values in quality.items()]
+                elif 'GROUP BY TRUNC(MES_REFERENCIA' in query:
+                    quality = oracle_upload._expected_monthly_quality('ouro', ouro)
+                    self.rows = [(month, *values) for month, values in quality.items()]
+                elif 'HAVING COUNT(*) > 1' in query:
+                    self.rows = [(0,)]
+                else:
+                    self.rows = []
 
-            def fetchmany(self, _size):
+            def fetchall(self):
                 rows, self.rows = self.rows, []
                 return rows
 
-        class Connection:
-            closed = False
+            def fetchone(self):
+                rows, self.rows = self.rows, []
+                return rows[0] if rows else None
 
+            def executemany(self, _statement, _rows):
+                return None
+
+        class Connection:
             def __init__(self):
                 self.cursor_instance = Cursor()
+                self.committed = False
+                self.rolled_back = False
+                self.closed = False
 
             def cursor(self):
                 return self.cursor_instance
 
-            def close(self):
-                self.closed = True
+            def commit(self):
+                self.committed = True
 
-        connection = Connection()
-        with TemporaryDirectory() as temporary_directory:
-            directory = Path(temporary_directory)
-            source_2023 = directory / 'DENGBR23.csv'
-            source_2023.write_text(
-                'DT_NOTIFIC,NU_ANO\n'
-                '2023-01-01,2023\n'
-                '2023-01-02,2023\n'
-                '2024-01-01,2024\n',
-                encoding='utf-8',
-            )
-            source_2024 = directory / 'DENGBR24.csv'
-            source_2024.write_text(
-                'DT_NOTIFIC,NU_ANO\n'
-                '2024-01-01,2024\n'
-                '2024-01-02,2024\n'
-                '2023-12-31,2023\n',
-                encoding='utf-8',
-            )
-            with (
-                patch.object(
-                    read_data_bronze,
-                    'CSV_SOURCES',
-                    {23: source_2023, 24: source_2024},
-                ),
-                patch.object(read_data_bronze, 'PROCESSED', directory / 'processed'),
-                patch.object(
-                    read_data_bronze, 'con_sql',
-                    return_value=(connection, 'connected'),
-                ),
-            ):
-                counts = read_data_bronze.read_data()
-
-            self.assertTrue(connection.closed)
-            self.assertEqual(counts, {23: 2, 24: 2, 25: 1, 26: 1})
-            self.assertEqual(
-                connection.cursor_instance.description[0][0],
-                'QUERY',
-            )
-            self.assertTrue(
-                all(
-                    (directory / 'processed' / f'df_bronze_{year}.parquet').is_file()
-                    for year in (23, 24, 25, 26)
-                )
-            )
-            saved_23 = pd.read_parquet(
-                directory / 'processed' / 'df_bronze_23.parquet'
-            )
-            self.assertEqual(len(saved_23), 2)
-            self.assertEqual(set(saved_23['NU_ANO']), {'2023'})
-            saved_24 = pd.read_parquet(
-                directory / 'processed' / 'df_bronze_24.parquet'
-            )
-            self.assertEqual(len(saved_24), 2)
-            self.assertEqual(set(saved_24['NU_ANO']), {'2024'})
-
-    def test_oracle_reader_closes_connection_when_query_fails(self):
-        class Connection:
-            closed = False
-
-            class Cursor:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *_):
-                    return False
-
-                def execute(self, _query):
-                    raise RuntimeError('query failed')
-
-            def cursor(self):
-                return self.Cursor()
+            def rollback(self):
+                self.rolled_back = True
 
             def close(self):
                 self.closed = True
 
         connection = Connection()
-        with TemporaryDirectory() as temporary_directory:
-            directory = Path(temporary_directory)
-            source_2023 = directory / 'DENGBR23.csv'
-            source_2023.write_text(
-                'DT_NOTIFIC,NU_ANO\n2023-01-01,2023\n',
-                encoding='utf-8',
+        with patch.object(
+            oracle_upload,
+            'con_sql',
+            return_value=(connection, 'connected'),
+        ):
+            oracle_upload.load_staging_tables(
+                {
+                    'prata': ('PRATA_STG', prata),
+                    'ouro': ('OURO_STG', ouro),
+                },
+                batch_size=2,
             )
-            source_2024 = directory / 'DENGBR24.csv'
-            source_2024.write_text(
-                'DT_NOTIFIC,NU_ANO\n2024-01-01,2024\n',
-                encoding='utf-8',
-            )
-            with (
-                patch.object(
-                    read_data_bronze,
-                    'CSV_SOURCES',
-                    {23: source_2023, 24: source_2024},
-                ),
-                patch.object(read_data_bronze, 'PROCESSED', directory / 'processed'),
-                patch.object(
-                    read_data_bronze, 'con_sql',
-                    return_value=(connection, 'connected'),
-                ),
-            ):
-                with self.assertRaisesRegex(RuntimeError, 'query failed'):
-                    read_data_bronze.read_data()
+
+        self.assertTrue(connection.committed)
+        self.assertFalse(connection.rolled_back)
         self.assertTrue(connection.closed)
+        statements = connection.cursor_instance.executed
+        self.assertIn('TRUNCATE TABLE PRATA_STG', statements)
+        self.assertIn('TRUNCATE TABLE OURO_STG', statements)
+        self.assertFalse(any('TRUNCATE TABLE PRATA\n' == query for query in statements))
+        self.assertFalse(any('DELETE FROM PRATA' in query for query in statements))
+
+    def test_staging_loader_rejects_production_table_names_before_connecting(self):
+        with patch.object(oracle_upload, 'con_sql') as connect:
+            with self.assertRaisesRegex(ValueError, 'terminadas em _STG'):
+                oracle_upload.load_staging_tables(
+                    {'prata': ('PRATA', pd.DataFrame({'DT_NOTIFIC': ['2025-01-01']}))}
+                )
+        connect.assert_not_called()
 
 
 if __name__ == '__main__':

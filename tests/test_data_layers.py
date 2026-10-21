@@ -29,7 +29,7 @@ class FakeCursor:
 
     def execute(self, statement, **binds):
         self.statements.append((statement, binds))
-        if 'USER_TAB_COLUMNS' in statement:
+        if 'user_tab_columns' in statement:
             self.current_table = binds['table_name']
 
     def fetchall(self):
@@ -117,6 +117,104 @@ class DataLayerTests(unittest.TestCase):
         self.assertTrue(connection.rolled_back)
         self.assertTrue(connection.closed)
 
+    def test_streaming_staging_loader_checks_parquet_aggregates(self):
+        gold = pd.DataFrame(
+            {
+                'MES_REFERENCIA': pd.to_datetime(
+                    ['2025-01-01', '2025-01-01', '2025-02-01']
+                ),
+                'ID_MUNICIP': [355030, 110020, 355030],
+                'UF': ['35', '11', '35'],
+                'MUNICIPIO': ['Sao Paulo', 'Porto Velho', 'Sao Paulo'],
+                'NOTIFICACOES': [10, 5, 3],
+                'CASOS_DENGUE': [8, 3, 2],
+                'OBITOS_DENGUE': [1, 0, 0],
+                'HOSPITALIZACOES': [2, 1, 1],
+            }
+        )
+
+        class Cursor:
+            def __init__(self):
+                self.rows = []
+                self.statements = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def execute(self, statement, **binds):
+                self.statements.append(statement)
+                if 'user_tab_columns' in statement:
+                    self.rows = [
+                        (str(column).upper(), 'Y', None)
+                        for column in gold.columns
+                    ]
+                elif statement.startswith('SELECT COUNT(*) FROM OURO_STG'):
+                    self.rows = [(len(gold),)]
+                elif 'GROUP BY TRUNC(MES_REFERENCIA' in statement:
+                    quality = oracle_upload._expected_monthly_quality('ouro', gold)
+                    self.rows = [
+                        (month, *values)
+                        for month, values in quality.items()
+                    ]
+                elif 'HAVING COUNT(*) > 1' in statement:
+                    self.rows = [(0,)]
+                else:
+                    self.rows = []
+
+            def fetchall(self):
+                rows, self.rows = self.rows, []
+                return rows
+
+            def fetchone(self):
+                rows, self.rows = self.rows, []
+                return rows[0] if rows else None
+
+            def executemany(self, _statement, _rows):
+                return None
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+                self.committed = False
+                self.closed = False
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                self.committed = True
+
+            def rollback(self):
+                raise AssertionError('valid staging load should not roll back')
+
+            def close(self):
+                self.closed = True
+
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / 'df_ouro.parquet'
+            gold.to_parquet(path, index=False)
+            connection = Connection()
+            with patch.object(
+                oracle_upload,
+                'con_sql',
+                return_value=(connection, 'connected'),
+            ):
+                oracle_upload.load_staging_parquets(
+                    {'ouro': ('OURO_STG', path)},
+                    batch_size=1,
+                    read_batch_size=1,
+                )
+
+        self.assertTrue(connection.committed)
+        self.assertTrue(connection.closed)
+        self.assertIn('TRUNCATE TABLE OURO_STG', connection.cursor_instance.statements)
+        self.assertFalse(
+            any('TRUNCATE TABLE OURO\n' in query for query in connection.cursor_instance.statements)
+        )
+
     def test_gold_aggregates_month_and_fills_municipality(self):
         with TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
@@ -158,6 +256,7 @@ class DataLayerTests(unittest.TestCase):
                     input_path=input_path,
                     output_path=output_path,
                     as_of=pd.Timestamp('2026-10-19'),
+                    batch_size=2,
                 )
 
             self.assertEqual(len(result), 2)

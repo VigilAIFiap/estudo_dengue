@@ -3,7 +3,6 @@ import {
   LineChart,
   ListOrdered,
   Map,
-  MessageSquareText,
   Package,
   Stethoscope,
   TrendingUp,
@@ -22,8 +21,7 @@ export const NAV_ANALISE: ItemNav[] = [
 
 export const NAV_OPERACAO: ItemNav[] = [
   { href: "/recursos", rotulo: "Recursos e custos", icone: Package, descricao: "Insumos, estoques e custos" },
-  { href: "/pacientes", rotulo: "Análise de pacientes", icone: Stethoscope, descricao: "Modelos experimentais" },
-  { href: "/assistente", rotulo: "Vigil Assist", icone: MessageSquareText, descricao: "Perguntas sobre os indicadores" },
+  { href: "/pacientes", rotulo: "Acolhimento", icone: Stethoscope, descricao: "Formulário para avaliação no APEX" },
 ];
 
 export const TODOS = [...NAV_ANALISE, ...NAV_OPERACAO];

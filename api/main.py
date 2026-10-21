@@ -21,14 +21,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import analytics as a
 from . import schemas as s
-from .assist import FERRAMENTAS, responder
 from .dataset import CLASSIFICACAO, CONFIRMADOS, UF_NOME, Dataset, carregar
+from .triage_intake import save_assessment
 
 load_dotenv()
 
 RAIZ = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("DENGUE_DATA_DIR", RAIZ / "dados" / "raw"))
-ASSIST_MODELO = os.environ.get("ASSIST_MODEL", "claude-sonnet-5-5")
 ORIGENS = [o for o in os.environ.get("API_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "csv").strip().lower()
 LOGGER = logging.getLogger(__name__)
@@ -36,6 +35,7 @@ LOGGER = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    a.limpar_caches()
     if DATA_SOURCE == "csv":
         app.state.dataset = carregar(DATA_DIR)
     elif DATA_SOURCE == "oracle":
@@ -120,6 +120,7 @@ def meta(ds: DS):
         ],
         "linhas_descartadas": ds.linhas_descartadas,
         "total_notificacoes": len(ds.notificacoes),
+        "fonte_dados": DATA_SOURCE,
         "ufs": [{"sigla": k, "nome": v} for k, v in sorted(UF_NOME.items(), key=lambda x: x[1])],
         "classificacoes": [{"codigo": k, "rotulo": v} for k, v in CLASSIFICACAO.items()],
         "confirmados_codigos": list(CONFIRMADOS),
@@ -198,9 +199,24 @@ def previsao(ds: DS, f: F):
     return a.previsao(ds, f)
 
 
-@app.get("/api/pacientes/status", response_model=s.PacientesStatus)
-def pacientes_status(ds: DS):
-    return a.pacientes_status(ds)
+@app.post(
+    "/api/pacientes/avaliacao",
+    status_code=201,
+    response_model=s.PatientAssessmentCreated,
+)
+def patient_assessment(
+    request: Request,
+    submission: s.PatientAssessmentSubmission,
+):
+    if os.environ.get("TRIAGE_FORM_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(
+            status_code=503,
+            detail="Recebimento de formulários está desativado nesta instalação.",
+        )
+    if request.headers.get("origin") not in ORIGENS:
+        raise HTTPException(status_code=403, detail="Origem não permitida para envio do formulário.")
+    intake_id = save_assessment(submission)
+    return {"intake_id": intake_id, "status": "PENDENTE"}
 
 
 def _csv(frame, nome: str) -> StreamingResponse:
@@ -229,28 +245,3 @@ def export_serie(ds: DS, f: F, granularidade: Literal["semana", "mes"] = "semana
     import pandas as pd
 
     return _csv(pd.DataFrame(a.serie(ds, f, granularidade)), f"dengue_serie_{granularidade}.csv")
-
-
-@app.get("/api/assist/status", response_model=s.AssistStatus)
-def assist_status():
-    configurado = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    return {
-        "configurado": configurado,
-        "modelo": ASSIST_MODELO if configurado else None,
-        "ferramentas": [t["name"] for t in FERRAMENTAS],
-    }
-
-
-@app.post("/api/assist", response_model=s.RespostaAssist, responses={503: {"model": s.Erro}})
-def assist(ds: DS, pedido: s.PedidoAssist):
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise HTTPException(503, "Provedor de IA não configurado: defina ANTHROPIC_API_KEY no .env da API.")
-    if not pedido.mensagens or pedido.mensagens[-1].papel != "usuario":
-        raise HTTPException(400, "A última mensagem deve ser do usuário.")
-    import anthropic
-
-    cliente = anthropic.Anthropic()
-    try:
-        return responder(ds, [m.model_dump() for m in pedido.mensagens], cliente.messages.create, ASSIST_MODELO)
-    except anthropic.APIError as erro:
-        raise HTTPException(502, f"Falha no provedor de IA: {erro.message}") from erro

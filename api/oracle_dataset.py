@@ -10,7 +10,6 @@ import pandas as pd
 from src.con_db import con_sql
 
 from .dataset import (
-    COLUNAS,
     Dataset,
     _carregar_municipios,
     _normalizar_notificacoes,
@@ -68,59 +67,12 @@ def carregar_oracle(
         table_name or os.environ.get("ORACLE_API_TABLE", "PRATA")
     )
     columns_sql = ", ".join(PRATA_COLUMNS)
-    query = (
-        f"SELECT {columns_sql} FROM {table} "
-        "WHERE DT_NOTIFIC >= DATE '2024-01-01'"
-    )
-    bronze_23_path = Path(municipalities_path).parent / "DENGBR23.csv"
-    if not bronze_23_path.is_file():
-        raise FileNotFoundError(
-            f"Fonte completa de 2023 não encontrada: {bronze_23_path}"
-        )
+    query = f"SELECT {columns_sql} FROM {table}"
     municipios = _carregar_municipios(Path(municipalities_path))
     reference_date = (hoje or pd.Timestamp.today()).normalize()
-    notificacoes: list[pd.DataFrame] = []
+    notificacoes = []
     invalidas = 0
     futuras = 0
-    bronze_23_rows = 0
-
-    bronze_23_chunks = pd.read_csv(
-        bronze_23_path,
-        encoding="latin-1",
-        usecols=COLUNAS,
-        dtype={
-            "DT_NOTIFIC": str,
-            "NU_ANO": str,
-            "SG_UF_NOT": str,
-            "ID_MUNICIP": "float64",
-            "HOSPITALIZ": "float32",
-            "CLASSI_FIN": "float32",
-            "EVOLUCAO": "float32",
-        },
-        chunksize=250_000,
-    )
-    fora_do_ano_23 = 0
-    for chunk in bronze_23_chunks:
-        year_mask = chunk["NU_ANO"].eq("2023")
-        fora_do_ano_23 += int((~year_mask).sum())
-        selected = chunk.loc[year_mask, COLUNAS]
-        if selected.empty:
-            continue
-        dates = pd.to_datetime(
-            selected["DT_NOTIFIC"], format="%Y-%m-%d", errors="coerce"
-        )
-        invalidas += int(dates.isna().sum())
-        futuras += int(dates.gt(reference_date).sum())
-        valid = dates.notna() & dates.le(reference_date)
-        if valid.any():
-            bronze_23_rows += int(valid.sum())
-            notificacoes.append(
-                _normalizar_notificacoes(
-                    selected.loc[valid],
-                    dates.loc[valid],
-                    municipios,
-                )
-            )
 
     conn, status = con_sql()
     if conn is None:
@@ -157,19 +109,18 @@ def carregar_oracle(
     finally:
         conn.close()
 
-    if not total and not bronze_23_rows:
+    if not total:
         LOGGER.warning(
-            "Não há notificações de 2023 no CSV nem notificações desde 2024 na tabela %s.",
+            "A tabela %s não contém notificações.",
             table,
         )
     if not notificacoes:
-        raise ValueError("A fonte Oracle e o CSV não contêm notificações válidas.")
+        raise ValueError("A tabela Oracle não contém notificações válidas.")
     dataset_frame = pd.concat(notificacoes, ignore_index=True)
 
     LOGGER.info(
-        "API: %s notificações de 2023 do CSV + %s linhas de %s; "
+        "API: %s linhas lidas da tabela %s; "
         "%s datas inválidas e %s futuras descartadas.",
-        f"{bronze_23_rows:,}",
         f"{total:,}",
         table,
         f"{invalidas:,}",
@@ -181,7 +132,6 @@ def carregar_oracle(
         carregado_em=pd.Timestamp.now(tz="UTC").to_pydatetime(),
         arquivos=(),
         linhas_descartadas={
-            "DENGBR23 com NU_ANO diferente de 2023": fora_do_ano_23,
             "DT_NOTIFIC inválida": invalidas,
             "DT_NOTIFIC posterior à data de processamento": futuras,
         },

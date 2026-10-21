@@ -50,6 +50,7 @@ class OracleDatasetTests(unittest.TestCase):
         connection = FakeConnection(
             [
                 [
+                    (pd.Timestamp("2023-12-31"), 355030, 2, "dengue", "cura"),
                     (pd.Timestamp("2025-01-01"), 355030, 1, "dengue", "obito_dengue"),
                     (pd.Timestamp("2025-01-02"), 355030, 2, "dengue_grave", "cura"),
                 ],
@@ -66,11 +67,6 @@ class OracleDatasetTests(unittest.TestCase):
                 "3550308,Sao Paulo,-23.5,-46.6,1,35\n",
                 encoding="utf-8",
             )
-            (Path(temporary_directory) / "DENGBR23.csv").write_text(
-                "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
-                "2023-03-01,2023,35,355030,2,10,1\n",
-                encoding="utf-8",
-            )
             with patch.object(
                 oracle_dataset, "con_sql",
                 return_value=(connection, "connected"),
@@ -85,7 +81,7 @@ class OracleDatasetTests(unittest.TestCase):
         self.assertEqual(
             connection.cursor_instance.query,
             "SELECT DT_NOTIFIC, ID_MUNICIP, HOSPITALIZ, CLASSI_FIN, EVOLUCAO "
-            "FROM PRATA WHERE DT_NOTIFIC >= DATE '2024-01-01'",
+            "FROM PRATA",
         )
         self.assertEqual(len(dataset.notificacoes), 3)
         self.assertEqual(int(dataset.notificacoes["confirmado"].sum()), 3)
@@ -98,12 +94,10 @@ class OracleDatasetTests(unittest.TestCase):
             ],
             1,
         )
-        self.assertEqual(dataset.notificacoes["uf"].astype(str).tolist(), ["SP", "SP", "SP"])
+        self.assertEqual(set(dataset.notificacoes["uf"].astype(str)), {"SP"})
         self.assertEqual(
-            dataset.linhas_descartadas[
-                "DENGBR23 com NU_ANO diferente de 2023"
-            ],
-            0,
+            set(dataset.notificacoes["data"].dt.year),
+            {2023, 2025},
         )
 
     def test_rejects_invalid_table_name_before_connecting(self):
@@ -127,11 +121,6 @@ class OracleDatasetTests(unittest.TestCase):
             municipalities.write_text(
                 "codigo_ibge,nome,latitude,longitude,capital,codigo_uf\n"
                 "3550308,Sao Paulo,-23.5,-46.6,1,35\n",
-                encoding="utf-8",
-            )
-            (Path(temporary_directory) / "DENGBR23.csv").write_text(
-                "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
-                "2023-03-01,2023,35,355030,2,10,1\n",
                 encoding="utf-8",
             )
             with patch.object(

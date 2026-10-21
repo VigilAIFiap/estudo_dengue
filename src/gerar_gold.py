@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from config import PROCESSED, RAW
 
@@ -19,36 +23,126 @@ def gold_acumulado_municipio(
     output_path=None,
     municipalities_path=None,
     as_of=None,
+    batch_size=25_000,
 ):
     input_path = input_path or PROCESSED / 'df_prata.parquet'
     output_path = output_path or PROCESSED / 'df_ouro.parquet'
-    df = pd.read_parquet(input_path)
-
+    input_path = Path(input_path)
+    if not input_path.is_file():
+        raise FileNotFoundError(f'Parquet Prata não encontrado: {input_path}')
+    if batch_size < 1:
+        raise ValueError('batch_size deve ser maior que zero.')
+    parquet = pq.ParquetFile(input_path)
+    try:
+        available = set(parquet.schema_arrow.names)
+    finally:
+        parquet.close()
     required = {'DT_NOTIFIC', 'ID_MUNICIP'}
-    missing = required.difference(df.columns)
+    missing = required.difference(available)
     if missing:
         raise ValueError(f'Colunas obrigatórias ausentes na Prata: {sorted(missing)}')
 
-    df['DT_NOTIFIC'] = pd.to_datetime(df['DT_NOTIFIC'], errors='coerce')
-    df['ID_MUNICIP'] = pd.to_numeric(df['ID_MUNICIP'], errors='coerce').astype('Int64')
     reference_date = pd.Timestamp(as_of or pd.Timestamp.today()).normalize()
-    valid_date = df['DT_NOTIFIC'].notna() & df['DT_NOTIFIC'].le(reference_date)
-    valid_municipality = df['ID_MUNICIP'].notna()
-    discarded_dates = int((~valid_date).sum())
-    discarded_municipalities = int((valid_date & ~valid_municipality).sum())
-    df = df.loc[valid_date & valid_municipality].copy()
+    columns = [
+        column
+        for column in (
+            'DT_NOTIFIC', 'ID_MUNICIP', 'NDUPLIC_N', 'CLASSI_FIN',
+            'EVOLUCAO', 'HOSPITALIZ',
+        )
+        if column in available
+    ]
+    aggregates = {}
+    discarded_dates = 0
+    discarded_municipalities = 0
+    excluded_duplicates = 0
+    valid_rows = 0
+
+    parquet = pq.ParquetFile(input_path)
+    try:
+        for batch in parquet.iter_batches(batch_size=batch_size, columns=columns):
+            df = batch.to_pandas()
+            df['DT_NOTIFIC'] = pd.to_datetime(df['DT_NOTIFIC'], errors='coerce')
+            df['ID_MUNICIP'] = pd.to_numeric(
+                df['ID_MUNICIP'], errors='coerce'
+            ).astype('Int64')
+            valid_date = df['DT_NOTIFIC'].notna() & df['DT_NOTIFIC'].le(reference_date)
+            valid_municipality = df['ID_MUNICIP'].notna()
+            discarded_dates += int((~valid_date).sum())
+            discarded_municipalities += int(
+                (valid_date & ~valid_municipality).sum()
+            )
+            df = df.loc[valid_date & valid_municipality].copy()
+            if 'NDUPLIC_N' in df:
+                duplicate_mask = pd.to_numeric(
+                    df['NDUPLIC_N'], errors='coerce'
+                ).eq(2).fillna(False)
+                excluded_duplicates += int(duplicate_mask.sum())
+                df = df.loc[~duplicate_mask].copy()
+            if df.empty:
+                continue
+
+            df['MES_REFERENCIA'] = (
+                df['DT_NOTIFIC'].dt.to_period('M').dt.to_timestamp()
+            )
+            classifications = (
+                df['CLASSI_FIN'].astype('string').str.lower()
+                if 'CLASSI_FIN' in df
+                else pd.Series('', index=df.index, dtype='string')
+            )
+            df['CASO_DENGUE'] = classifications.isin(
+                DENGUE_CLASSIFICATIONS
+            ).astype('int64')
+            evolution = (
+                df['EVOLUCAO'].astype('string').str.lower()
+                if 'EVOLUCAO' in df
+                else pd.Series('', index=df.index, dtype='string')
+            )
+            df['OBITO_DENGUE'] = (
+                evolution.eq('obito_dengue').fillna(False).astype('int64')
+            )
+            hospitalized = (
+                pd.to_numeric(df['HOSPITALIZ'], errors='coerce').eq(1)
+                if 'HOSPITALIZ' in df
+                else pd.Series(False, index=df.index)
+            )
+            df['HOSPITALIZACAO'] = hospitalized.fillna(False).astype('int64')
+            monthly = (
+                df.groupby(['MES_REFERENCIA', 'ID_MUNICIP'], observed=True)
+                .agg(
+                    NOTIFICACOES=('ID_MUNICIP', 'size'),
+                    CASOS_DENGUE=('CASO_DENGUE', 'sum'),
+                    OBITOS_DENGUE=('OBITO_DENGUE', 'sum'),
+                    HOSPITALIZACOES=('HOSPITALIZACAO', 'sum'),
+                )
+            )
+            valid_rows += len(df)
+            for (month, municipality), row in monthly.iterrows():
+                key = (pd.Timestamp(month), int(municipality))
+                values = tuple(
+                    int(row[column])
+                    for column in (
+                        'NOTIFICACOES', 'CASOS_DENGUE',
+                        'OBITOS_DENGUE', 'HOSPITALIZACOES',
+                    )
+                )
+                current = aggregates.get(key, (0, 0, 0, 0))
+                aggregates[key] = tuple(
+                    previous + value
+                    for previous, value in zip(current, values)
+                )
+    finally:
+        parquet.close()
+
     print(
         f'Ouro: {discarded_dates:,} registros com data inválida/futura e '
         f'{discarded_municipalities:,} sem município excluídos.'
     )
-    if 'NDUPLIC_N' in df:
-        duplicates_to_exclude = (
-            pd.to_numeric(df['NDUPLIC_N'], errors='coerce').eq(2).fillna(False)
-        )
-        excluded = int(duplicates_to_exclude.sum())
-        df = df.loc[~duplicates_to_exclude].copy()
-        print(f'Ouro: {excluded:,} registros marcados NDUPLIC_N=2 excluídos das métricas.')
-    df['MES_REFERENCIA'] = df['DT_NOTIFIC'].dt.to_period('M').dt.to_timestamp()
+    print(
+        f'Ouro: {excluded_duplicates:,} registros marcados NDUPLIC_N=2 '
+        'excluídos das métricas.'
+    )
+    if not valid_rows:
+        raise ValueError('A camada Prata não contém linhas válidas para a Ouro.')
 
     municipios = pd.read_csv(municipalities_path or RAW / 'municipios.csv')
     municipios['codigo_ibge'] = pd.to_numeric(
@@ -59,42 +153,20 @@ def gold_acumulado_municipio(
         raise ValueError('A dimensão municipios.csv possui IDs municipais repetidos.')
     municipios = municipios.set_index('ID_MUNICIP')
 
-    classifications = (
-        df['CLASSI_FIN'].astype('string').str.lower()
-        if 'CLASSI_FIN' in df.columns
-        else pd.Series('', index=df.index, dtype='string')
+    gold_rows = [
+        (month, municipality, *values)
+        for (month, municipality), values in aggregates.items()
+    ]
+    df_ouro = pd.DataFrame(
+        gold_rows,
+        columns=[
+            'MES_REFERENCIA', 'ID_MUNICIP', 'NOTIFICACOES',
+            'CASOS_DENGUE', 'OBITOS_DENGUE', 'HOSPITALIZACOES',
+        ],
     )
-    df['CASO_DENGUE'] = classifications.isin(DENGUE_CLASSIFICATIONS).astype('int64')
-
-    evolution = (
-        df['EVOLUCAO'].astype('string').str.lower()
-        if 'EVOLUCAO' in df.columns
-        else pd.Series('', index=df.index, dtype='string')
-    )
-    df['OBITO_DENGUE'] = (
-        evolution.eq('obito_dengue').fillna(False).astype('int64')
-    )
-
-    hospitalized = (
-        pd.to_numeric(df['HOSPITALIZ'], errors='coerce').eq(1)
-        if 'HOSPITALIZ' in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    df['HOSPITALIZACAO'] = hospitalized.fillna(False).astype('int64')
-
-    keys = ['MES_REFERENCIA', 'ID_MUNICIP']
-    df_ouro = (
-        df.groupby(keys, dropna=False, observed=True)
-        .agg(
-            NOTIFICACOES=('ID_MUNICIP', 'size'),
-            CASOS_DENGUE=('CASO_DENGUE', 'sum'),
-            OBITOS_DENGUE=('OBITO_DENGUE', 'sum'),
-            HOSPITALIZACOES=('HOSPITALIZACAO', 'sum'),
-        )
-        .reset_index()
-        .sort_values(keys, na_position='last')
-        .reset_index(drop=True)
-    )
+    df_ouro = df_ouro.sort_values(
+        ['MES_REFERENCIA', 'ID_MUNICIP']
+    ).reset_index(drop=True)
     df_ouro['MUNICIPIO'] = df_ouro['ID_MUNICIP'].map(municipios['nome'])
     df_ouro['UF'] = (
         pd.to_numeric(
@@ -127,7 +199,15 @@ def gold_acumulado_municipio(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df_ouro.to_parquet(output_path, index=False)
+    temporary_path = output_path.with_name(
+        f'.{output_path.name}.{uuid.uuid4().hex}.tmp'
+    )
+    try:
+        df_ouro.to_parquet(temporary_path, index=False)
+        os.replace(temporary_path, output_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
     return df_ouro
 
 

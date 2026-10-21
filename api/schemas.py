@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 Nivel = Literal["Crítico", "Alto", "Médio", "Baixo"]
 
@@ -27,6 +27,7 @@ class ArquivoFonte(BaseModel):
 
 
 class Meta(BaseModel):
+    fonte_dados: Literal["csv", "oracle"]
     cobertura_inicio: date
     cobertura_fim: date
     padrao_inicio: date
@@ -274,35 +275,25 @@ class Previsao(BaseModel):
     validacao: Validacao | None
 
 
-class PacientesStatus(BaseModel):
-    disponivel: bool
-    colunas_faltando: list[str]
-    colunas_disponiveis: list[str]
+class PatientAssessmentSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    age_group: Literal["0-4", "5-9", "10-19", "20-39", "40-59", "60+"] | None = None
+    sex: Literal["F", "M", "OUTRO"] | None = None
+    symptom_duration: Literal["HOJE", "1-3_DIAS", "4+_DIAS"] | None = None
+    fever: Literal["SIM", "NAO"] | None = None
+    headache: Literal["SIM", "NAO"] | None = None
+    muscle_pain: Literal["SIM", "NAO"] | None = None
+    rash: Literal["SIM", "NAO"] | None = None
+    nausea: Literal["SIM", "NAO"] | None = None
+    vomiting: Literal["SIM", "NAO"] | None = None
+    pregnancy: Literal["SIM", "NAO"] | None = None
+    comorbidities: Literal["SIM", "NAO"] | None = None
 
 
-class AssistStatus(BaseModel):
-    configurado: bool
-    modelo: str | None
-    ferramentas: list[str]
-
-
-class MensagemAssist(BaseModel):
-    papel: Literal["usuario", "assistente"]
-    texto: str
-
-
-class PedidoAssist(BaseModel):
-    mensagens: list[MensagemAssist]
-
-
-class ConsultaFerramenta(BaseModel):
-    ferramenta: str
-    parametros: dict
-
-
-class RespostaAssist(BaseModel):
-    texto: str
-    consultas: list[ConsultaFerramenta]
+class PatientAssessmentCreated(BaseModel):
+    intake_id: int
+    status: Literal["PENDENTE"]
 
 
 class Erro(BaseModel):

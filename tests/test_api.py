@@ -5,7 +5,6 @@ import unittest
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -17,9 +16,8 @@ sys.path.insert(0, str(RAIZ / "src"))
 from fastapi.testclient import TestClient  # noqa: E402
 
 from api import analytics as a  # noqa: E402
-from api.assist import executar_ferramenta, responder  # noqa: E402
 from api.dataset import carregar, semana_epidemiologica  # noqa: E402
-from api.main import app, dataset  # noqa: E402
+from api.main import DATA_SOURCE, app, dataset  # noqa: E402
 from criticidade import apply_criticality, classificar  # noqa: E402
 
 CABECALHO = "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
@@ -227,12 +225,6 @@ class AnaliticaTests(Base):
         finally:
             a.previsao.cache_clear()
 
-    def test_pacientes_indisponivel_sem_colunas_clinicas(self):
-        r = a.pacientes_status(self.ds)
-        self.assertFalse(r["disponivel"])
-        self.assertIn("FEBRE", r["colunas_faltando"])
-
-
 class CriticidadeTests(unittest.TestCase):
     def test_cortes_fixos(self):
         self.assertEqual([classificar(v) for v in (50, 49.9, 35, 20, 19.9)], ["Crítico", "Alto", "Alto", "Médio", "Baixo"])
@@ -271,9 +263,22 @@ class RotasTests(Base):
 
     def test_rotas_principais_respondem(self):
         for rota in ("/api/meta", "/api/visao-geral", "/api/series", "/api/series/anual", "/api/distribuicoes",
-                     "/api/municipios", "/api/mapa", "/api/previsao", "/api/pacientes/status", "/api/assist/status"):
+                     "/api/municipios", "/api/mapa", "/api/previsao"):
             with self.subTest(rota=rota):
                 self.assertEqual(self.client.get(rota).status_code, 200)
+        self.assertEqual(self.client.get("/api/assist/status").status_code, 404)
+
+    def test_meta_informa_a_fonte_configurada(self):
+        resposta = self.client.get("/api/meta")
+        self.assertEqual(resposta.json()["fonte_dados"], DATA_SOURCE)
+
+    def test_series_reutiliza_resultado_em_consultas_repetidas(self):
+        a.serie.cache_clear()
+        filtros = a.Filtros()
+        primeiro = a.serie(self.ds, filtros, "mes")
+        segundo = a.serie(self.ds, filtros, "mes")
+        self.assertIs(primeiro, segundo)
+        self.assertEqual(a.serie.cache_info().hits, 1)
 
     def test_detalhe_municipio_inexistente(self):
         self.assertEqual(self.client.get("/api/municipios/999999").status_code, 404)
@@ -285,33 +290,47 @@ class RotasTests(Base):
         self.assertTrue(linhas[0].startswith("mes;uf;codigo_ibge"))
         self.assertTrue(all(";SP;" in linha for linha in linhas[1:]))
 
-    def test_assist_sem_chave_retorna_503(self):
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}):
-            r = self.client.post("/api/assist", json={"mensagens": [{"papel": "usuario", "texto": "oi"}]})
-        self.assertEqual(r.status_code, 503)
+    def test_triage_form_requires_explicit_enablement(self):
+        with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "false"}):
+            response = self.client.post(
+                "/api/pacientes/avaliacao",
+                json={"age_group": "20-39"},
+                headers={"Origin": "http://localhost:3000"},
+            )
+        self.assertEqual(response.status_code, 503)
 
+    def test_triage_form_stores_only_allowlisted_fields(self):
+        with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "true"}), patch(
+            "api.main.save_assessment",
+            return_value=42,
+        ) as save:
+            response = self.client.post(
+                "/api/pacientes/avaliacao",
+                json={"age_group": "20-39", "fever": "SIM"},
+                headers={"Origin": "http://localhost:3000"},
+            )
 
-class AssistTests(Base):
-    def test_ferramenta_consulta_dados_reais(self):
-        r = executar_ferramenta(self.ds, "visao_geral", {"ufs": ["RO"]})
-        self.assertEqual(r["totais"]["notificacoes"], 15)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"intake_id": 42, "status": "PENDENTE"})
+        self.assertEqual(save.call_args.args[0].age_group, "20-39")
+        self.assertEqual(save.call_args.args[0].fever, "SIM")
+        self.assertIsNone(save.call_args.args[0].sex)
 
-    def test_laco_executa_ferramenta_e_retorna_texto(self):
-        chamadas = []
+    def test_triage_form_rejects_unapproved_fields_and_origins(self):
+        with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "true"}):
+            bad_origin = self.client.post(
+                "/api/pacientes/avaliacao",
+                json={},
+                headers={"Origin": "https://untrusted.example"},
+            )
+            extra_field = self.client.post(
+                "/api/pacientes/avaliacao",
+                json={"patient_name": "Sensitive"},
+                headers={"Origin": "http://localhost:3000"},
+            )
 
-        def falso(**kwargs):
-            chamadas.append(kwargs)
-            if len(chamadas) == 1:
-                bloco = SimpleNamespace(type="tool_use", id="t1", name="visao_geral", input={"ufs": ["SP"]})
-                return SimpleNamespace(stop_reason="tool_use", content=[bloco])
-            resultado = chamadas[1]["messages"][-1]["content"][0]
-            self.assertEqual(resultado["type"], "tool_result")
-            self.assertIn('"notificacoes": 120', resultado["content"])
-            return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="120 notificações.")])
-
-        r = responder(self.ds, [{"papel": "usuario", "texto": "Quantas notificações em SP?"}], falso, "modelo")
-        self.assertEqual(r["texto"], "120 notificações.")
-        self.assertEqual(r["consultas"], [{"ferramenta": "visao_geral", "parametros": {"ufs": ["SP"]}}])
+        self.assertEqual(bad_origin.status_code, 403)
+        self.assertEqual(extra_field.status_code, 422)
 
 
 if __name__ == "__main__":

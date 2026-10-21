@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
+import uuid
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from config import PROCESSED, RAW
 
@@ -216,15 +220,21 @@ def etl(
     input_dir: Path | None = None,
     municipalities_path: Path | None = None,
     output_path: Path | None = None,
+    *,
+    _streaming: bool = False,
+    _write_output: bool = True,
+    _report_quality_enabled: bool = True,
+    _municipality_dimension: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Transform cached or supplied SINAN Bronze frames into the Silver layer."""
     frames = bronze_data if bronze_data is not None else _load_bronze(input_dir or PROCESSED)
-    if len(frames) != 4:
+    if len(frames) != 4 and not _streaming:
         raise ValueError('São esperados quatro DataFrames Bronze (2023–2026).')
     if any(not isinstance(frame, pd.DataFrame) for frame in frames):
         raise TypeError('Cada entrada Bronze deve ser um DataFrame pandas.')
-    for year, frame in zip((23, 24, 25, 26), frames):
-        print(f'Bronze DENGBR{year}: {len(frame):,} linhas.')
+    if not _streaming:
+        for year, frame in zip((23, 24, 25, 26), frames):
+            print(f'Bronze DENGBR{year}: {len(frame):,} linhas.')
 
     df = pd.concat(frames, ignore_index=True, sort=False)
     df.columns = [str(column).strip().upper() for column in df.columns]
@@ -283,7 +293,11 @@ def etl(
         df['IDADE_ANOS'] = years
 
     municipality_path = municipalities_path or RAW / 'municipios.csv'
-    municipalities = _municipal_dimension(municipality_path)
+    municipalities = (
+        _municipality_dimension
+        if _municipality_dimension is not None
+        else _municipal_dimension(municipality_path)
+    )
     df['ID_MUNICIP'] = _numeric(df['ID_MUNICIP']).astype('Int64')
     df = df.merge(
         municipalities,
@@ -317,12 +331,98 @@ def etl(
         ).str.zfill(2)
 
     df = df.drop(columns=[column for column in DROP_COLUMNS if column in df])
-    _report_quality(df)
+    if _streaming:
+        for column in df.select_dtypes(include=['object', 'string']).columns:
+            df[column] = df[column].astype('string')
+    if _report_quality_enabled:
+        _report_quality(df)
 
-    destination = Path(output_path or PROCESSED / 'df_prata.parquet')
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(destination, index=False)
+    if _write_output:
+        destination = Path(output_path or PROCESSED / 'df_prata.parquet')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(destination, index=False)
     return df
+
+
+def etl_parquet_batches(
+    input_dir: Path = PROCESSED,
+    municipalities_path: Path = RAW / 'municipios.csv',
+    output_path: Path = PROCESSED / 'df_prata.parquet',
+    batch_size: int = 25_000,
+) -> int:
+    """Transform the four Bronze Parquets to Silver with bounded memory."""
+    if batch_size < 1:
+        raise ValueError('batch_size deve ser maior que zero.')
+    paths = [Path(input_dir) / f'df_bronze_{year}.parquet' for year in (23, 24, 25, 26)]
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            'Parquets Bronze ausentes: ' + ', '.join(map(str, missing))
+            + '. Execute primeiro: python src\\read_data_bronze.py'
+        )
+
+    schemas = []
+    for path in paths:
+        parquet = pq.ParquetFile(path)
+        try:
+            schemas.append(parquet.schema_arrow.names)
+        finally:
+            parquet.close()
+    bronze_columns = list(dict.fromkeys(column for schema in schemas for column in schema))
+    municipalities = _municipal_dimension(Path(municipalities_path))
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = destination.with_name(
+        f'.{destination.name}.{uuid.uuid4().hex}.tmp'
+    )
+    writer = None
+    row_count = 0
+    try:
+        for year, path in zip((23, 24, 25, 26), paths):
+            parquet = pq.ParquetFile(path)
+            year_count = 0
+            try:
+                for batch in parquet.iter_batches(batch_size=batch_size):
+                    frame = batch.to_pandas()
+                    frame = frame.reindex(columns=bronze_columns)
+                    transformed = etl(
+                        bronze_data=(frame,),
+                        municipalities_path=municipalities_path,
+                        _streaming=True,
+                        _write_output=False,
+                        _report_quality_enabled=False,
+                        _municipality_dimension=municipalities,
+                    )
+                    table = pa.Table.from_pandas(
+                        transformed,
+                        preserve_index=False,
+                    )
+                    if writer is None:
+                        writer = pq.ParquetWriter(temporary_path, table.schema)
+                    else:
+                        table = table.cast(writer.schema, safe=False)
+                    writer.write_table(table)
+                    year_count += len(transformed)
+                    row_count += len(transformed)
+            finally:
+                parquet.close()
+            print(f'Bronze DENGBR{year}: {year_count:,} linhas processadas.')
+        if writer is None:
+            raise ValueError('As fontes Bronze não contêm linhas para transformar.')
+        writer.close()
+        writer = None
+        os.replace(temporary_path, destination)
+    finally:
+        if writer is not None:
+            writer.close()
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+    print(
+        f'Camada Prata gerada em lotes: {row_count:,} registros em {destination}. '
+        'A revisão detalhada de qualidade deve ser executada sobre o Parquet.'
+    )
+    return row_count
 
 
 def main() -> None:
@@ -347,13 +447,20 @@ def main() -> None:
         default=PROCESSED / 'df_prata.parquet',
         help='Caminho para o Parquet Prata gerado.',
     )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=25_000,
+        help='Linhas por lote durante a transformação da Prata.',
+    )
     args = parser.parse_args()
-    result = etl(
+    result = etl_parquet_batches(
         input_dir=args.input_dir,
         municipalities_path=args.municipalities,
         output_path=args.output,
+        batch_size=args.batch_size,
     )
-    print(f'Camada Prata gerada: {len(result):,} registros em {args.output}')
+    print(f'Camada Prata gerada: {result:,} registros em {args.output}')
 
 
 if __name__ == '__main__':

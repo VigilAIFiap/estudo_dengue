@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { paraParametros, lerFiltros } from "@/lib/filters";
-import { useAssistStatus, usePacientesStatus } from "@/lib/queries";
 import { cn } from "@/components/ui/cn";
 import { BrandMark } from "./brand";
 import { NAV_ANALISE, NAV_OPERACAO, type ItemNav } from "./nav";
@@ -17,12 +16,9 @@ export function useHrefComFiltros() {
 }
 
 function useStatusModulos(): Record<string, string | undefined> {
-  const pacientes = usePacientesStatus();
-  const assist = useAssistStatus();
   return {
     "/recursos": "Aguarda integração de insumos e custos",
-    "/pacientes": pacientes.data && !pacientes.data.disponivel ? "Base sem dados clínicos" : undefined,
-    "/assistente": assist.data && !assist.data.configurado ? "Provedor de IA não configurado" : undefined,
+    "/pacientes": "Avaliação pendente no APEX",
   };
 }
 

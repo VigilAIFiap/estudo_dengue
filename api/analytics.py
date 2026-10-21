@@ -129,6 +129,7 @@ def visao_geral(ds: Dataset, f: Filtros) -> dict:
     }
 
 
+@lru_cache(maxsize=32)
 def serie(ds: Dataset, f: Filtros, granularidade: str) -> list[dict]:
     if granularidade not in ("semana", "mes"):
         raise ValueError("granularidade deve ser 'semana' ou 'mes'.")
@@ -203,6 +204,7 @@ def comparacao_anual(ds: Dataset, f: Filtros) -> dict:
     return {"anos": anos, "ultima_data": maximo}
 
 
+@lru_cache(maxsize=32)
 def distribuicoes(ds: Dataset, f: Filtros) -> dict:
     df = ds.notificacoes.loc[mascara(ds, f)]
 
@@ -433,6 +435,7 @@ CAMADAS = {
 }
 
 
+@lru_cache(maxsize=16)
 def mapa(ds: Dataset, f: Filtros) -> dict:
     tabela, q1 = criticidade(ds, f)
     pontos = [
@@ -482,6 +485,7 @@ def _pct(v: float) -> str:
     return f"{v:.1f}".replace(".", ",") + "%"
 
 
+@lru_cache(maxsize=32)
 def insights_e_alertas(ds: Dataset, f: Filtros) -> dict:
     """Achados descritivos com critério explícito. Nenhum é causal."""
     tabela, _ = criticidade(ds, f)
@@ -625,21 +629,6 @@ def previsao(ds: Dataset, f: Filtros) -> dict:
     return {**base, "status": "disponivel", "motivo": None}
 
 
-def pacientes_status(ds: Dataset) -> dict:
-    from modelos.pacientes import FEATURE_COLUMNS
-
-    necessarias = set(FEATURE_COLUMNS) | {"DT_NOTIFIC", "CLASSI_FIN", "HOSPITALIZ"}
-    disponiveis = set(ds.colunas_disponiveis)
-    if "NU_IDADE_N" in disponiveis:
-        disponiveis.add("IDADE_ANOS")
-    faltando = sorted(necessarias - disponiveis)
-    return {
-        "disponivel": not faltando,
-        "colunas_faltando": faltando,
-        "colunas_disponiveis": sorted(ds.colunas_disponiveis),
-    }
-
-
 def exportar_agregado(ds: Dataset, f: Filtros) -> pd.DataFrame:
     df = ds.notificacoes.loc[mascara(ds, f)]
     g = (
@@ -666,3 +655,18 @@ def exportar_ranking(ds: Dataset, f: Filtros) -> pd.DataFrame:
         ["posicao", "nome", "uf", "codigo_ibge", "notificacoes", "confirmados", "graves", "obitos_dengue",
          "hospitalizacoes", "taxa_hospitalizacao", "letalidade", "score_criticidade", "nivel"]
     ]
+
+
+def limpar_caches() -> None:
+    """Evita manter datasets antigos e resultados derivados após reinicialização."""
+    for funcao in (
+        visao_geral,
+        serie,
+        comparacao_anual,
+        distribuicoes,
+        criticidade,
+        mapa,
+        insights_e_alertas,
+        previsao,
+    ):
+        funcao.cache_clear()

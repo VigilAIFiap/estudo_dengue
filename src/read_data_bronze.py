@@ -9,19 +9,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from config import PROCESSED, RAW
-from con_db import con_sql
 
 
-CSV_YEARS = (23, 24)
-ORACLE_YEARS = (25, 26)
-BRONZE_23_CSV = RAW / 'DENGBR23.csv'
-BRONZE_24_CSV = RAW / 'DENGBR24.csv'
 CSV_SOURCES = {
-    23: BRONZE_23_CSV,
-    24: BRONZE_24_CSV,
+    year: RAW / f'DENGBR{year}.csv'
+    for year in (23, 24, 25, 26)
 }
-FETCH_SIZE = 50_000
-CSV_CHUNK_SIZE = 100_000
+CSV_CHUNK_SIZE = 10_000
 
 
 def _write_batches(
@@ -103,21 +97,26 @@ def _write_csv_year(year: int, destination: Path) -> tuple[int, int]:
     return selected, other_years
 
 
-def _write_oracle_table(cursor, year: int, destination: Path) -> int:
-    cursor.execute(f'SELECT * FROM DENGBR{year}')
-    columns = [column[0] for column in cursor.description]
-
-    def batches():
-        while rows := cursor.fetchmany(FETCH_SIZE):
-            yield pd.DataFrame.from_records(rows, columns=columns)
-
-    return _write_batches(destination, batches(), f'DENGBR{year}')
-
-
 def read_data() -> dict[int, int]:
-    """Refresh the four Bronze Parquets without loading full sources into memory."""
+    """Refresh all four Bronze Parquets from the local annual CSV files."""
     PROCESSED.mkdir(parents=True, exist_ok=True)
-    years = (*CSV_YEARS, *ORACLE_YEARS)
+    years = tuple(CSV_SOURCES)
+    missing_sources = [
+        str(CSV_SOURCES[year])
+        for year in years
+        if not CSV_SOURCES[year].is_file()
+    ]
+    if missing_sources:
+        raise FileNotFoundError(
+            'Fontes CSV anuais ausentes: ' + ', '.join(missing_sources)
+        )
+    source_signatures = {
+        year: (
+            CSV_SOURCES[year].stat().st_size,
+            CSV_SOURCES[year].stat().st_mtime_ns,
+        )
+        for year in years
+    }
     temporary_paths = {
         year: PROCESSED / f'.df_bronze_{year}.{uuid.uuid4().hex}.parquet'
         for year in years
@@ -125,25 +124,26 @@ def read_data() -> dict[int, int]:
     try:
         counts: dict[int, int] = {}
         discarded_other_years = {}
-        for year in CSV_YEARS:
+        for year in years:
             counts[year], discarded_other_years[year] = _write_csv_year(
                 year,
                 temporary_paths[year],
             )
 
-        conn, status = con_sql()
-        if conn is None:
-            raise RuntimeError(f'Não foi possível conectar ao Oracle: {status}')
-        try:
-            with conn.cursor() as cursor:
-                for year in ORACLE_YEARS:
-                    counts[year] = _write_oracle_table(
-                        cursor,
-                        year,
-                        temporary_paths[year],
-                    )
-        finally:
-            conn.close()
+        changed_sources = [
+            CSV_SOURCES[year].name
+            for year in years
+            if (
+                CSV_SOURCES[year].stat().st_size,
+                CSV_SOURCES[year].stat().st_mtime_ns,
+            )
+            != source_signatures[year]
+        ]
+        if changed_sources:
+            raise RuntimeError(
+                'Fontes CSV foram modificadas durante a leitura: '
+                + ', '.join(changed_sources)
+            )
 
         for year, temporary_path in temporary_paths.items():
             os.replace(
@@ -151,7 +151,7 @@ def read_data() -> dict[int, int]:
                 PROCESSED / f'df_bronze_{year}.parquet',
             )
 
-        for year in CSV_YEARS:
+        for year in years:
             print(
                 f'DENGBR{year}.csv: {counts[year]:,} registros de {2000 + year} '
                 f'selecionados; {discarded_other_years[year]:,} registros '
