@@ -192,3 +192,7 @@ web/out/
 web/*.tsbuildinfo
 # A API hospedada precisa do cadastro de municípios (arquivo pequeno e público)
 !api/data/municipios.csv
+
+# Wallet do Oracle: nunca versionar
+wallet/
+Wallet_*
