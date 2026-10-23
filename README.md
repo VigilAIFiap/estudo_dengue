@@ -188,6 +188,21 @@ O formulário não coleta nome, CPF, endereço, telefone ou texto livre, mas as 
 
 `API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md). Para publicar a API (Docker), a carga no Oracle e o front na Vercel, veja [Publicar o projeto](docs/DEPLOY_VERCEL.md).
 
+## Modo apresentação (local)
+
+Para demonstrações presenciais, rode tudo no próprio computador, sem hospedagem. Na raiz, com o venv ativo:
+
+```powershell
+python scripts\demo.py --verificar   # confere dados, Node, portas e a conexão com o Oracle
+python scripts\demo.py               # inicia a API e o front compilado e abre o navegador
+```
+
+O script compila o front na primeira vez (`--build` força uma nova compilação), espera a API carregar os dados e encerra
+tudo com Ctrl+C. Os painéis funcionam sem internet; o Acolhimento e o Oracle APEX precisam do Oracle na nuvem. Use
+`http://localhost:3000` (não `127.0.0.1`). O roteiro completo, com o passo a passo da demonstração, as perguntas
+prováveis e o plano B, está em [docs/ROTEIRO_DEMONSTRACAO.md](docs/ROTEIRO_DEMONSTRACAO.md). Dados fictícios para a
+triagem: `sql/preparar_demo_triagem.sql`; para limpar a fila: `sql/limpar_demo_triagem.sql`.
+
 ## Modelos experimentais
 
 `src/modelos/` contém modelos temporais e classificadores experimentais independentes da interface. Previsões e classificações exigem validação com dados representativos e revisão profissional. Não são diagnóstico, recomendação clínica nem substitutos da decisão da equipe de saúde.

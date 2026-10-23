@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -58,6 +59,11 @@ def contagem(ds) -> dict[int, int]:
 
 class BaseMunicipalTests(unittest.TestCase):
     def setUp(self):
+        # Parte sempre do padrão, mesmo que o .env local defina DENGUE_MUNICIPIO_BASE.
+        ambiente = patch.dict("os.environ")
+        ambiente.start()
+        self.addCleanup(ambiente.stop)
+        os.environ.pop("DENGUE_MUNICIPIO_BASE", None)
         self.tmp = TemporaryDirectory()
         self.pasta = Path(self.tmp.name)
         self.hoje = pd.Timestamp("2026-10-17")

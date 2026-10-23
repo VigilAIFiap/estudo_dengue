@@ -12,7 +12,7 @@ export type ItemNav = { href: string; rotulo: string; icone: LucideIcon; descric
 
 export const NAV_ANALISE: ItemNav[] = [
   { href: "/", rotulo: "Visão geral", icone: LayoutDashboard, descricao: "Situação epidemiológica do período" },
-  { href: "/historico", rotulo: "Análise histórica", icone: LineChart, descricao: "Séries e comparação entre anos" },
+  { href: "/historico", rotulo: "Análise histórica", icone: LineChart, descricao: "Séries por semana e por mês" },
   { href: "/mapa", rotulo: "Mapa", icone: Map, descricao: "Distribuição geográfica e criticidade" },
   { href: "/municipios", rotulo: "Municípios", icone: ListOrdered, descricao: "Ranking, detalhe e comparação" },
   { href: "/previsoes", rotulo: "Previsões", icone: TrendingUp, descricao: "Modelo SARIMA mensal" },

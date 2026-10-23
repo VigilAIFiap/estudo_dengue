@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from datetime import date
@@ -55,6 +56,21 @@ def criar_base(pasta: Path) -> None:
     (pasta / "DENGBR25.csv").write_text(b25, encoding="latin-1")
     (pasta / "DENGBR26.csv").write_text(b26, encoding="latin-1")
     (pasta / "municipios.csv").write_text(MUNICIPIOS, encoding="utf-8")
+
+
+_AMBIENTE = None
+
+
+def setUpModule():
+    # Os dados sintéticos não têm ID_MN_RESI: todo o arquivo ignora o DENGUE_MUNICIPIO_BASE do .env local.
+    global _AMBIENTE
+    _AMBIENTE = patch.dict("os.environ")
+    _AMBIENTE.start()
+    os.environ.pop("DENGUE_MUNICIPIO_BASE", None)
+
+
+def tearDownModule():
+    _AMBIENTE.stop()
 
 
 class Base(unittest.TestCase):

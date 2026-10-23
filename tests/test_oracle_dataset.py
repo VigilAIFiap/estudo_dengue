@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -46,6 +47,13 @@ class FakeConnection:
 
 
 class OracleDatasetTests(unittest.TestCase):
+    def setUp(self):
+        # O modo padrão não lê ID_MN_RESI: ignora o DENGUE_MUNICIPIO_BASE do .env local.
+        ambiente = patch.dict("os.environ")
+        ambiente.start()
+        self.addCleanup(ambiente.stop)
+        os.environ.pop("DENGUE_MUNICIPIO_BASE", None)
+
     def test_loads_prata_codes_into_api_dataset_and_closes_connection(self):
         connection = FakeConnection(
             [
