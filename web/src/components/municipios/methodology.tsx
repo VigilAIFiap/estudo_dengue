@@ -15,11 +15,20 @@ export function Methodology({ m }: { m: Schemas["Metodologia"] }) {
           <li>
             Mantém só municípios com mais notificações que o 1º quartil do recorte (hoje {fmtInt(m.q1)}). Os demais aparecem como “sem score”.
           </li>
-          <li>Abaixo de {m.piso_casos} notificações, as taxas de óbito e hospitalização valem zero, para evitar taxas infladas por poucos casos.</li>
+          <li>
+            Suaviza as taxas de óbito e hospitalização em direção à média do recorte, como se cada município tivesse{" "}
+            {fmtInt(m.pseudo_casos_obito)} e {fmtInt(m.pseudo_casos_hospitalizacao)} notificações extras com a taxa média, respectivamente.
+            Assim, 2 óbitos em 50 casos não viram uma letalidade extrema.
+          </li>
           <li>
             Normaliza cada componente de 0 a 1 entre os municípios do recorte e soma: {pct(m.pesos.volume_log)} volume (log das notificações),{" "}
             {pct(m.pesos.taxa_obito)} taxa de óbito, {pct(m.pesos.taxa_hospitalizacao)} taxa de hospitalização. Multiplica por 100.
           </li>
+          <li>
+            Os componentes de óbito e hospitalização são multiplicados pela credibilidade n / (n + {fmtInt(m.casos_credibilidade)}): com{" "}
+            {fmtInt(m.casos_credibilidade)} notificações valem metade; com 1.000, cerca de 91%.
+          </li>
+          <li>Municípios com menos de {fmtInt(m.minimo_casos_critico)} notificações não são classificados como Crítico (ficam no máximo em Alto).</li>
         </ol>
       </div>
       <div>

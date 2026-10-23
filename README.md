@@ -186,6 +186,8 @@ O formulário não coleta nome, CPF, endereço, telefone ou texto livre, mas as 
 
 `API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md).
 
+A metodologia do score de criticidade municipal, com justificativas e comparativo antes/depois, está em [Score de criticidade](docs/SCORE_CRITICIDADE.md).
+
 ## Modelos experimentais
 
 `src/modelos/` contém modelos temporais e classificadores experimentais independentes da interface. Previsões e classificações exigem validação com dados representativos e revisão profissional. Não são diagnóstico, recomendação clínica nem substitutos da decisão da equipe de saúde.

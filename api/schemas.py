@@ -134,7 +134,10 @@ class Pesos(BaseModel):
 
 class Metodologia(BaseModel):
     pesos: Pesos
-    piso_casos: int
+    pseudo_casos_obito: int
+    pseudo_casos_hospitalizacao: int
+    casos_credibilidade: int
+    minimo_casos_critico: int
     q1: float
     cortes: list[Corte]
 
@@ -196,7 +199,8 @@ class Componentes(BaseModel):
     volume: float
     obito: float
     hospitalizacao: float
-    abaixo_piso: bool
+    credibilidade: float
+    limitado_por_volume: bool
 
 
 class DetalheMunicipio(Municipio):

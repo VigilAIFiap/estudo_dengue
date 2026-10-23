@@ -91,8 +91,9 @@ export default function VisaoGeralPage() {
                 Score relativo aos municípios do recorte; não é protocolo oficial de risco.
                 <InfoTip>
                   50% volume de notificações (log), 30% taxa de óbito, 20% taxa de hospitalização, normalizados entre os
-                  municípios com volume acima do 1º quartil ({fmtInt(v.metodologia.q1)} notificações). Abaixo de{" "}
-                  {v.metodologia.piso_casos} notificações, as taxas valem zero. Cortes: Crítico ≥ 50, Alto ≥ 35, Médio ≥ 20.
+                  municípios com volume acima do 1º quartil ({fmtInt(v.metodologia.q1)} notificações). As taxas são suavizadas e
+                  pesam menos em municípios com poucos casos. Cortes: Crítico ≥ 50 (e ao menos{" "}
+                  {fmtInt(v.metodologia.minimo_casos_critico)} notificações), Alto ≥ 35, Médio ≥ 20.
                 </InfoTip>
               </span>
             )
