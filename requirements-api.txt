@@ -1,0 +1,9 @@
+# Dependências mínimas para hospedar a API (sem ETL, testes nem notebooks).
+pandas>=3.0.0
+numpy>=2.4.0
+scikit-learn>=1.8.0
+pmdarima>=2.1.0
+oracledb>=2.5.0
+python-dotenv>=1.0.0
+fastapi>=0.120.0
+uvicorn[standard]>=0.35.0

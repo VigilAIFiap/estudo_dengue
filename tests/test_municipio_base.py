@@ -11,7 +11,7 @@ import pandas as pd
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from api.dataset import base_municipal_configurada, carregar  # noqa: E402
+from api.dataset import RAIZ_PROJETO, base_municipal_configurada, caminho_municipios, carregar  # noqa: E402
 
 CABECALHO = "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,ID_MN_RESI,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
 CABECALHO_SEM_RESIDENCIA = "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
@@ -95,6 +95,22 @@ class BaseMunicipalTests(unittest.TestCase):
         with patch.dict("os.environ", {"DENGUE_MUNICIPIO_BASE": "residencia"}):
             with self.assertRaisesRegex(ValueError, "ID_MN_RESI"):
                 carregar(self.pasta, hoje=self.hoje)
+
+    def test_cadastro_de_municipios_cai_na_copia_versionada(self):
+        with patch.dict("os.environ", {}, clear=False):
+            os_env = __import__("os").environ
+            os_env.pop("MUNICIPIOS_CSV", None)
+            self.assertEqual(caminho_municipios(self.pasta), RAIZ_PROJETO / "api" / "data" / "municipios.csv")
+            (self.pasta / "municipios.csv").write_text(MUNICIPIOS, encoding="utf-8")
+            self.assertEqual(caminho_municipios(self.pasta), self.pasta / "municipios.csv")
+        with patch.dict("os.environ", {"MUNICIPIOS_CSV": "/outro/caminho.csv"}):
+            self.assertEqual(caminho_municipios(self.pasta), Path("/outro/caminho.csv"))
+
+    def test_copia_versionada_do_cadastro_esta_completa(self):
+        cadastro = pd.read_csv(RAIZ_PROJETO / "api" / "data" / "municipios.csv")
+        self.assertEqual(len(cadastro), 5571)
+        self.assertEqual(int(cadastro["codigo_ibge"].duplicated().sum()), 0)
+        self.assertEqual(int(cadastro["nome"].isna().sum()), 0)
 
     def test_valor_invalido_da_variavel_e_recusado(self):
         with patch.dict("os.environ", {"DENGUE_MUNICIPIO_BASE": "moradia"}):

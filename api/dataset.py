@@ -33,6 +33,20 @@ COLUNAS = [
 ]
 
 BASES_MUNICIPAIS = ("notificacao", "residencia")
+RAIZ_PROJETO = Path(__file__).resolve().parents[1]
+
+
+def caminho_municipios(data_dir: Path) -> Path:
+    """municipios.csv a usar: MUNICIPIOS_CSV, o da pasta de dados ou a cópia versionada em api/data.
+
+    A cópia versionada permite hospedar a API (DATA_SOURCE=oracle) sem os CSVs de notificações,
+    que não vão para o git.
+    """
+    explicito = os.environ.get("MUNICIPIOS_CSV", "").strip()
+    if explicito:
+        return Path(explicito)
+    local = Path(data_dir) / "municipios.csv"
+    return local if local.exists() else RAIZ_PROJETO / "api" / "data" / "municipios.csv"
 
 
 def base_municipal_configurada() -> str:

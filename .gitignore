@@ -190,3 +190,5 @@ web/node_modules/
 web/.next/
 web/out/
 web/*.tsbuildinfo
+# A API hospedada precisa do cadastro de municípios (arquivo pequeno e público)
+!api/data/municipios.csv

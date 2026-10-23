@@ -274,6 +274,11 @@ class RotasTests(Base):
         self.assertTrue(linhas[0].startswith("mes;uf;codigo_ibge"))
         self.assertTrue(all(";SP;" in linha for linha in linhas[1:]))
 
+    def test_healthz_responde_para_a_hospedagem(self):
+        resposta = self.client.get("/healthz")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"status": "ok"})
+
     def test_mapa_informa_municipios_sem_notificacao_e_sem_score(self):
         r = self.client.get("/api/mapa").json()
         self.assertEqual(len(r["pontos"]) + r["sem_notificacao"], r["cadastro"])

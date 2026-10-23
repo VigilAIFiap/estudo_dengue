@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import analytics as a
 from . import schemas as s
-from .dataset import CLASSIFICACAO, CONFIRMADOS, UF_NOME, Dataset, carregar
+from .dataset import CLASSIFICACAO, CONFIRMADOS, UF_NOME, Dataset, carregar, caminho_municipios
 from .triage_intake import save_assessment
 
 load_dotenv()
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     elif DATA_SOURCE == "oracle":
         from .oracle_dataset import carregar_oracle
 
-        app.state.dataset = carregar_oracle(DATA_DIR / "municipios.csv")
+        app.state.dataset = carregar_oracle(caminho_municipios(DATA_DIR))
     else:
         raise RuntimeError(
             f"DATA_SOURCE inválido: {DATA_SOURCE!r}. Use 'csv' ou 'oracle'."
@@ -99,6 +99,12 @@ def filtros(
 
 DS = Annotated[Dataset, Depends(dataset)]
 F = Annotated[a.Filtros, Depends(filtros)]
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Verificação de saúde para a hospedagem; só responde depois que os dados foram carregados."""
+    return {"status": "ok"}
 
 
 @app.get("/api/meta", response_model=s.Meta)

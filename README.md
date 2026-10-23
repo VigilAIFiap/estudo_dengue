@@ -186,7 +186,7 @@ O fluxo administrativo de qualidade CSV está separado do formulário de acolhim
 
 O formulário não coleta nome, CPF, endereço, telefone ou texto livre, mas as respostas continuam sendo dados de saúde. Use dados sintéticos para desenvolvimento, limite o acesso ao Oracle/APEX, defina retenção e auditoria e não exponha o formulário publicamente sem autenticação e controles de acesso adequados.
 
-`API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md). Para publicar o front na Vercel, veja [Publicar o front na Vercel](docs/DEPLOY_VERCEL.md).
+`API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md). Para publicar a API (Docker), a carga no Oracle e o front na Vercel, veja [Publicar o projeto](docs/DEPLOY_VERCEL.md).
 
 ## Modelos experimentais
 
