@@ -229,22 +229,49 @@ class CriticidadeTests(unittest.TestCase):
     def test_cortes_fixos(self):
         self.assertEqual([classificar(v) for v in (50, 49.9, 35, 20, 19.9)], ["Crítico", "Alto", "Alto", "Médio", "Baixo"])
 
-    def test_piso_zera_taxas_e_pesos_do_app(self):
+    @staticmethod
+    def _features(casos, obitos, hospitalizados):
         f = pd.DataFrame(
             {
-                "id_municip": [1, 2, 3],
-                "casos": [1000, 100, 10],
-                "obitos": [10, 0, 5],
-                "hospitalizados": [100, 0, 10],
-                "UF": ["SP"] * 3,
+                "id_municip": range(1, len(casos) + 1),
+                "casos": casos,
+                "obitos": obitos,
+                "hospitalizados": hospitalizados,
+                "UF": ["SP"] * len(casos),
             }
         )
         f["taxa_hospitalizacao"] = f["hospitalizados"] / f["casos"]
         f["taxa_obito"] = f["obitos"] / f["casos"]
+        return f
+
+    def test_pesos_do_app(self):
+        f = self._features([1000, 100, 10], [10, 0, 0], [100, 0, 0])
         r = apply_criticality(f).set_index("id_municip")
-        self.assertEqual(r.loc[3, "taxa_obito"], 0.0)  # abaixo do piso de 50 casos
-        self.assertAlmostEqual(r.loc[1, "score_criticidade"], 100.0, places=1)
-        self.assertEqual(r.loc[3, "score_criticidade"], 0.0)
+        self.assertAlmostEqual(r.loc[1, "score_criticidade"], 100 * (0.5 + 0.3 * 1000 / 1100 + 0.2 * 1000 / 1100), places=1)
+        self.assertEqual(r.loc[3, "norm_log_casos"], 0.0)
+        self.assertLess(r.loc[3, "score_criticidade"], 5)
+
+    def test_poucos_casos_com_muitas_internacoes_nao_vira_critico(self):
+        # Caso real (Barbalha/CE, 2026): 50 notificações, 31 internações e 2 óbitos.
+        casos = [50, 35000, 3000, 1500, 400, 120, 30, 10]
+        obitos = [2, 56, 8, 3, 1, 0, 0, 0]
+        hosp = [31, 1600, 990, 60, 20, 5, 1, 0]
+        r = apply_criticality(self._features(casos, obitos, hosp)).set_index("id_municip")
+        self.assertNotEqual(r.loc[1, "nivel"], "Crítico")
+        self.assertLess(r.loc[1, "score_criticidade"], r.loc[3, "score_criticidade"])
+        self.assertLess(r.loc[1, "taxa_obito_suav"], 0.04 / 4)
+
+    def test_sem_degrau_no_volume(self):
+        f = self._features([49, 50, 5000, 10], [1, 1, 5, 0], [10, 10, 250, 0])
+        r = apply_criticality(f).set_index("id_municip")
+        self.assertLess(abs(r.loc[1, "score_criticidade"] - r.loc[2, "score_criticidade"]), 1.0)
+
+    def test_critico_exige_volume_minimo(self):
+        f = self._features([99, 10, 11], [5, 0, 0], [60, 0, 0])
+        r = apply_criticality(f).set_index("id_municip")
+        self.assertGreaterEqual(r.loc[1, "score_criticidade"], 50)
+        self.assertEqual(r.loc[1, "nivel"], "Alto")
+        self.assertTrue(r.loc[1, "limitado_por_volume"])
 
 
 class RotasTests(Base):

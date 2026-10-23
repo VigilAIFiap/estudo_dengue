@@ -66,8 +66,13 @@ export function MunicipioDrawer({ id, onFechar }: { id: number | null; onFechar:
                           Hospitalização {fmtDec(m.componentes.hospitalizacao)}
                         </li>
                       </ul>
-                      {m.componentes.abaixo_piso && (
-                        <p className="text-xs text-muted">Abaixo de 50 notificações: as taxas não pontuam.</p>
+                      {m.componentes.credibilidade < 0.5 && (
+                        <p className="text-xs text-muted">
+                          Poucas notificações: óbito e hospitalização pesam {fmtDec(m.componentes.credibilidade * 100)}% do valor cheio.
+                        </p>
+                      )}
+                      {m.componentes.limitado_por_volume && (
+                        <p className="text-xs text-muted">Score na faixa crítica, mas com volume insuficiente: nível limitado a Alto.</p>
                       )}
                     </div>
                   )}

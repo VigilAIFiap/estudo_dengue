@@ -18,11 +18,14 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from criticidade import (  # noqa: E402
+    CASOS_CREDIBILIDADE,
     CORTES,
+    MINIMO_CASOS_CRITICO,
     PESO_HOSPITALIZACAO,
     PESO_OBITO,
     PESO_VOLUME,
-    PISO_CASOS,
+    PSEUDO_CASOS_HOSPITALIZACAO,
+    PSEUDO_CASOS_OBITO,
     criticality_from_notifications,
 )
 
@@ -262,7 +265,10 @@ def criticidade(ds: Dataset, f: Filtros) -> tuple[pd.DataFrame, float]:
         .join(ds.municipios[["nome", "uf", "latitude", "longitude", "capital"]])
     )
     score = score.set_index("id_municip")[
-        ["score_criticidade", "nivel", "norm_log_casos", "norm_taxa_obito", "norm_taxa_hospitalizacao", "taxa_obito", "obitos"]
+        [
+            "score_criticidade", "nivel", "norm_log_casos", "norm_taxa_obito", "norm_taxa_hospitalizacao",
+            "taxa_obito", "obitos", "credibilidade", "limitado_por_volume",
+        ]
     ]
     resultado = todos.join(score, how="left").rename(columns={"obitos": "obitos_score"})
     resultado["taxa_hospitalizacao"] = resultado["hospitalizacoes"] / resultado["notificacoes"]
@@ -392,7 +398,10 @@ def niveis_distribuicao(tabela: pd.DataFrame) -> list[dict]:
 def metodologia_score(q1: float) -> dict:
     return {
         "pesos": {"volume_log": PESO_VOLUME, "taxa_obito": PESO_OBITO, "taxa_hospitalizacao": PESO_HOSPITALIZACAO},
-        "piso_casos": PISO_CASOS,
+        "pseudo_casos_obito": PSEUDO_CASOS_OBITO,
+        "pseudo_casos_hospitalizacao": PSEUDO_CASOS_HOSPITALIZACAO,
+        "casos_credibilidade": CASOS_CREDIBILIDADE,
+        "minimo_casos_critico": MINIMO_CASOS_CRITICO,
         "q1": q1,
         "cortes": [{"nivel": n, "minimo": None if c == float("-inf") else c} for n, c in CORTES],
     }
@@ -412,7 +421,8 @@ def detalhe_municipio(ds: Dataset, f: Filtros, id_municip: int) -> dict:
             "volume": round(float(r["norm_log_casos"]) * PESO_VOLUME * 100, 1),
             "obito": round(float(r["norm_taxa_obito"]) * PESO_OBITO * 100, 1),
             "hospitalizacao": round(float(r["norm_taxa_hospitalizacao"]) * PESO_HOSPITALIZACAO * 100, 1),
-            "abaixo_piso": bool(r["notificacoes"] < PISO_CASOS),
+            "credibilidade": round(float(r["credibilidade"]), 3),
+            "limitado_por_volume": bool(r["limitado_por_volume"]),
         }
     pontuados = int(tabela["score_criticidade"].notna().sum())
     return {
@@ -525,7 +535,8 @@ def insights_e_alertas(ds: Dataset, f: Filtros) -> dict:
                 "id": "maior_score",
                 "titulo": f"Maior score de criticidade: {maior['nome']} ({maior['uf']}), {str(maior['score_criticidade']).replace('.', ',')}",
                 "detalhe": f"Nível {maior['nivel']}. Score relativo aos {len(pontuados)} municípios pontuados no recorte.",
-                "origem": "Score do projeto: 50% volume (log), 30% taxa de óbito, 20% taxa de hospitalização.",
+                "origem": "Score do projeto: 50% volume (log), 30% taxa de óbito, 20% taxa de hospitalização "
+                "(taxas suavizadas e ponderadas pela credibilidade do volume).",
                 "municipio": int(pontuados.index[0]),
             }
         )
@@ -552,7 +563,7 @@ def insights_e_alertas(ds: Dataset, f: Filtros) -> dict:
                 "id": "criticos",
                 "severidade": "Crítico",
                 "titulo": f"{_plural(criticos, 'município', 'municípios')} em nível crítico",
-                "criterio": "Score de criticidade ≥ 50 no recorte selecionado.",
+                "criterio": f"Score de criticidade ≥ 50 e ao menos {MINIMO_CASOS_CRITICO} notificações no recorte selecionado.",
             }
         )
     if comparacao:
