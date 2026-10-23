@@ -3,7 +3,6 @@ import {
   LineChart,
   ListOrdered,
   Map,
-  Package,
   Stethoscope,
   TrendingUp,
   type LucideIcon,
@@ -20,8 +19,7 @@ export const NAV_ANALISE: ItemNav[] = [
 ];
 
 export const NAV_OPERACAO: ItemNav[] = [
-  { href: "/recursos", rotulo: "Recursos e custos", icone: Package, descricao: "Insumos, estoques e custos" },
-  { href: "/pacientes", rotulo: "Acolhimento", icone: Stethoscope, descricao: "Formulário para avaliação no APEX" },
+  { href: "/pacientes", rotulo: "Acolhimento", icone: Stethoscope, descricao: "Triagem validada pelo Oracle APEX" },
 ];
 
 export const TODOS = [...NAV_ANALISE, ...NAV_OPERACAO];

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { GlobalFilters } from "@/components/filters/global-filters";
 import { EpiCurve } from "@/components/charts/epi-curve";
-import { DistributionBars, LevelDistribution } from "@/components/charts/bars";
+import { LevelDistribution } from "@/components/charts/bars";
 import { PageHeader } from "@/components/shell/page-header";
 import { useHrefComFiltros } from "@/components/shell/app-sidebar";
 import { AlertList } from "@/components/ui/alert-list";
@@ -13,18 +13,20 @@ import { InsightCard } from "@/components/ui/insight-card";
 import { MetricBand, type Metrica } from "@/components/ui/metric-band";
 import { Panel } from "@/components/ui/panel";
 import { RankingList } from "@/components/ui/ranking-list";
+import { ResultadoDestaque } from "@/components/ui/resultado-destaque";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import type { Schemas } from "@/lib/api";
 import { fmtData, fmtInt, fmtPct } from "@/lib/format";
-import { urlExportacao, useFiltrosResolvidos, useMapa, useSeries, useSeriesEm, useVisaoGeral } from "@/lib/queries";
+import { useRotuloBase } from "@/lib/base-municipal";
+import { urlExportacao, useFiltrosResolvidos, useSeries, useSeriesEm, useVisaoGeral } from "@/lib/queries";
 
 export default function VisaoGeralPage() {
   const { params } = useFiltrosResolvidos();
+  const rotuloBase = useRotuloBase();
   const visao = useVisaoGeral();
   const serie = useSeries("semana");
   const comparacao = visao.data?.comparacao;
   const anterior = useSeriesEm("semana", comparacao ? { inicio: comparacao.inicio, fim: comparacao.fim } : null);
-  const mapa = useMapa();
   const href = useHrefComFiltros();
   const v = visao.data;
 
@@ -32,10 +34,12 @@ export default function VisaoGeralPage() {
     <>
       <PageHeader
         titulo="Visão geral epidemiológica"
-        descricao="Notificações de dengue no SINAN por município notificador. Os indicadores, a curva e o ranking seguem os mesmos filtros."
+        descricao={`Notificações de dengue no SINAN por ${rotuloBase}. Os indicadores, a curva e o ranking seguem os mesmos filtros.`}
         acoes={<ExportButton href={urlExportacao("/api/export/agregado.csv", params)}>Exportar mês × município</ExportButton>}
       />
       <GlobalFilters />
+
+      {v && <ResultadoDestaque visao={v} hrefMapa={href("/mapa")} />}
 
       {visao.isError ? (
         <ErrorState erro={visao.error} tentarNovamente={() => visao.refetch()} />
@@ -46,6 +50,7 @@ export default function VisaoGeralPage() {
       <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-12">
         <Panel
           id="curva"
+          destaque="primary"
           className="xl:col-span-8"
           titulo="Curva epidêmica por semana epidemiológica"
           subtitulo={
@@ -68,6 +73,7 @@ export default function VisaoGeralPage() {
 
         <Panel
           id="alertas"
+          destaque="alto"
           className="xl:col-span-4"
           titulo="Alertas analíticos"
           subtitulo="Disparados por critérios fixos, descritos em cada item"
@@ -77,6 +83,7 @@ export default function VisaoGeralPage() {
 
         <Panel
           id="ranking"
+          destaque="critico"
           className="xl:col-span-6"
           titulo="Municípios mais críticos"
           subtitulo="Top 10 pelo score de criticidade do projeto"
@@ -90,9 +97,11 @@ export default function VisaoGeralPage() {
               <span className="inline-flex items-center gap-1">
                 Score relativo aos municípios do recorte; não é protocolo oficial de risco.
                 <InfoTip>
-                  50% volume de notificações (log), 30% taxa de óbito, 20% taxa de hospitalização, normalizados entre os
-                  municípios com volume acima do 1º quartil ({fmtInt(v.metodologia.q1)} notificações). Abaixo de{" "}
-                  {v.metodologia.piso_casos} notificações, as taxas valem zero. Cortes: Crítico ≥ 50, Alto ≥ 35, Médio ≥ 20.
+                  Score = fator de volume (log das notificações, de 0 a 1) × severidade ({Math.round(v.metodologia.pesos.taxa_obito * 100)}%
+                  taxa de óbito e {Math.round(v.metodologia.pesos.taxa_hospitalizacao * 100)}% taxa de hospitalização, em percentil entre os
+                  municípios). Considera os municípios com mais notificações que o 1º quartil ({fmtInt(v.metodologia.q1)}). As taxas de
+                  municípios com poucos casos são suavizadas em direção à média (peso de {v.metodologia.suavizacao_casos} casos). Cortes: Crítico ≥
+                  50, Alto ≥ 35, Médio ≥ 20.
                 </InfoTip>
               </span>
             )
@@ -101,25 +110,20 @@ export default function VisaoGeralPage() {
           {!v ? <LoadingState altura={360} /> : <RankingList itens={v.top_municipios} />}
         </Panel>
 
-        <div className="flex flex-col gap-5 xl:col-span-6">
-        <Panel id="niveis" titulo="Municípios por nível de criticidade" subtitulo="Quantos municípios do recorte estão em cada faixa do score">
-          {!v ? <LoadingState altura={200} /> : <LevelDistribution niveis={v.niveis} />}
-        </Panel>
-
         <Panel
-          id="ufs"
-          className="flex-1"
-          titulo="Distribuição geográfica"
-          subtitulo="UFs com mais notificações no recorte"
+          id="niveis"
+          destaque="teal"
+          className="xl:col-span-6"
+          titulo="Municípios por nível de criticidade"
+          subtitulo="Quantos municípios do recorte estão em cada faixa do score"
           acoes={
             <Link href={href("/mapa")} className="text-[13px] font-medium text-primary-ink hover:underline">
               Abrir mapa
             </Link>
           }
         >
-          {!mapa.data ? <LoadingState altura={300} /> : <UfBars ufs={mapa.data.ufs} />}
+          {!v ? <LoadingState altura={360} /> : <LevelDistribution niveis={v.niveis} />}
         </Panel>
-        </div>
       </div>
 
       <section aria-labelledby="insights-titulo" className="mt-5">
@@ -143,17 +147,6 @@ export default function VisaoGeralPage() {
   );
 }
 
-function UfBars({ ufs }: { ufs: Schemas["UfMapa"][] }) {
-  const total = ufs.reduce((s, u) => s + u.notificacoes, 0);
-  const topo = [...ufs].sort((a, b) => b.notificacoes - a.notificacoes).slice(0, 6);
-  if (!total) return <EmptyState titulo="Sem notificações no recorte" />;
-  return (
-    <DistributionBars
-      itens={topo.map((u) => ({ chave: u.uf, rotulo: u.nome, total: u.notificacoes, pct: (u.notificacoes / total) * 100 }))}
-    />
-  );
-}
-
 const anteriorRotulo = (v: Schemas["VisaoGeral"]) =>
   v.comparacao ? `vs. mesmo período de ${v.comparacao.inicio.slice(0, 4)}` : "sem período comparável";
 
@@ -164,6 +157,7 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
   return [
     {
       id: "notificacoes",
+      tom: "primary",
       rotulo: "Notificações",
       valor: fmtInt(t.notificacoes),
       variacao: vp?.notificacoes,
@@ -177,6 +171,7 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
     },
     {
       id: "confirmados",
+      tom: "teal",
       rotulo: "Casos confirmados",
       valor: fmtInt(t.confirmados),
       variacao: vp?.confirmados,
@@ -186,6 +181,7 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
     },
     {
       id: "graves",
+      tom: "alto",
       rotulo: "Alarme ou grave",
       valor: fmtInt(t.graves),
       variacao: vp?.graves,
@@ -194,6 +190,7 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
     },
     {
       id: "obitos",
+      tom: "critico",
       rotulo: "Óbitos pelo agravo",
       valor: fmtInt(t.obitos),
       variacao: vp?.obitos,
@@ -204,6 +201,7 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
     },
     {
       id: "hospitalizacoes",
+      tom: "medio",
       rotulo: "Hospitalizações",
       valor: fmtInt(t.hospitalizacoes),
       variacao: vp?.hospitalizacoes,
@@ -211,17 +209,9 @@ function metricas(v: Schemas["VisaoGeral"]): Metrica[] {
       detalhe: <span className="block">{fmtPct(t.notificacoes ? t.hospitalizacoes / t.notificacoes : null)} das notificações</span>,
       calculo: "Campo HOSPITALIZ = 1 (sim). Registros com campo vazio ou ignorado não são contados.",
     },
-    {
-      id: "municipios",
-      rotulo: "Municípios notificantes",
-      valor: fmtInt(t.municipios),
-      variacao: vp?.municipios,
-      comparacaoRotulo: rotulo,
-      calculo: "Municípios notificadores distintos (ID_MUNICIP) com ao menos uma notificação no recorte.",
-    },
   ];
 }
 
-const metricasVazias: Metrica[] = ["Notificações", "Casos confirmados", "Alarme ou grave", "Óbitos pelo agravo", "Hospitalizações", "Municípios notificantes"].map(
+const metricasVazias: Metrica[] = ["Notificações", "Casos confirmados", "Alarme ou grave", "Óbitos pelo agravo", "Hospitalizações"].map(
   (rotulo) => ({ id: rotulo, rotulo, valor: "", calculo: "" }),
 );

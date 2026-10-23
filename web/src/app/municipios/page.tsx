@@ -16,6 +16,7 @@ import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { NIVEIS } from "@/lib/criticality";
 import { fmtInt } from "@/lib/format";
+import { useRotuloBase } from "@/lib/base-municipal";
 import { urlExportacao, useFiltrosResolvidos, useRanking } from "@/lib/queries";
 import { useDebounce } from "@/lib/use-debounce";
 import { useDefinirParametros, useFiltros, useParametro } from "@/lib/use-filtros";
@@ -25,6 +26,7 @@ const TAMANHOS = [25, 50, 100];
 
 export default function MunicipiosPage() {
   const { params } = useFiltrosResolvidos();
+  const rotuloBase = useRotuloBase();
   const { filtros } = useFiltros();
   const [aberto, setAberto] = useParametro("m");
   const [compararParam, setComparar] = useParametro("comparar");
@@ -68,7 +70,7 @@ export default function MunicipiosPage() {
     <>
       <PageHeader
         titulo="Ranking e análise de municípios"
-        descricao="Indicadores por município notificador e o score de criticidade do projeto. Marque até quatro municípios para comparar."
+        descricao={`Indicadores por ${rotuloBase} e o score de criticidade do projeto. Marque até quatro municípios para comparar.`}
         acoes={<ExportButton href={urlExportacao("/api/export/municipios.csv", params)}>Exportar ranking</ExportButton>}
       />
       <GlobalFilters ignorados={{ municipio: "O ranking mostra todos os municípios; o filtrado aparece destacado." }} />

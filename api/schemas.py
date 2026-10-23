@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 Nivel = Literal["Crítico", "Alto", "Médio", "Baixo"]
 
@@ -28,6 +28,8 @@ class ArquivoFonte(BaseModel):
 
 class Meta(BaseModel):
     fonte_dados: Literal["csv", "oracle"]
+    base_municipal: Literal["notificacao", "residencia"]
+    sem_residencia: int
     cobertura_inicio: date
     cobertura_fim: date
     padrao_inicio: date
@@ -127,14 +129,13 @@ class Corte(BaseModel):
 
 
 class Pesos(BaseModel):
-    volume_log: float
     taxa_obito: float
     taxa_hospitalizacao: float
 
 
 class Metodologia(BaseModel):
     pesos: Pesos
-    piso_casos: int
+    suavizacao_casos: int
     q1: float
     cortes: list[Corte]
 
@@ -194,9 +195,10 @@ class Ranking(BaseModel):
 
 class Componentes(BaseModel):
     volume: float
+    severidade: float
     obito: float
     hospitalizacao: float
-    abaixo_piso: bool
+    taxas_suavizadas: bool
 
 
 class DetalheMunicipio(Municipio):
@@ -243,6 +245,9 @@ class Mapa(BaseModel):
     pontos: list[PontoMapa]
     ufs: list[UfMapa]
     q1: float
+    cadastro: int
+    sem_notificacao: int
+    sem_score: int
 
 
 class MesObservado(BaseModel):
@@ -293,7 +298,9 @@ class PatientAssessmentSubmission(BaseModel):
 
 class PatientAssessmentCreated(BaseModel):
     intake_id: int
-    status: Literal["PENDENTE"]
+    status: Literal["PENDENTE", "EM_ANALISE", "APROVADO", "REJEITADO", "CONCLUIDO"]
+    campos_faltantes: list[str] = Field(default_factory=list)
+    inconsistencias: list[str] = Field(default_factory=list)
 
 
 class Erro(BaseModel):

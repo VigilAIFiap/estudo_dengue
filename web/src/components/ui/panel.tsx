@@ -1,7 +1,17 @@
 import type { ReactNode } from "react";
 import { cn } from "./cn";
 
+const DESTAQUE = {
+  primary: "border-t-[3px] border-t-primary",
+  teal: "border-t-[3px] border-t-teal",
+  alto: "border-t-[3px] border-t-alto",
+  critico: "border-t-[3px] border-t-critico",
+  baixo: "border-t-[3px] border-t-baixo",
+} as const;
+
 type Props = {
+  /** Faixa colorida no topo, para dar ênfase ao painel. */
+  destaque?: keyof typeof DESTAQUE;
   titulo: string;
   subtitulo?: ReactNode;
   acoes?: ReactNode;
@@ -13,12 +23,16 @@ type Props = {
 };
 
 /** Painel padrão para gráficos e tabelas: título descritivo, contexto e fonte. */
-export function Panel({ titulo, subtitulo, acoes, rodape, children, className, corpoClassName, id }: Props) {
+export function Panel({ titulo, subtitulo, acoes, rodape, children, className, corpoClassName, id, destaque }: Props) {
   const tituloId = id ? `${id}-titulo` : undefined;
   return (
     <section
       aria-labelledby={tituloId}
-      className={cn("flex min-w-0 flex-col rounded-panel border border-line bg-surface", className)}
+      className={cn(
+        "flex min-w-0 flex-col rounded-panel border border-line bg-surface",
+        destaque && DESTAQUE[destaque],
+        className,
+      )}
     >
       <header className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
         <div className="min-w-0">

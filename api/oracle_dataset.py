@@ -13,6 +13,7 @@ from .dataset import (
     Dataset,
     _carregar_municipios,
     _normalizar_notificacoes,
+    base_municipal_configurada,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -66,7 +67,9 @@ def carregar_oracle(
     table = _table_name(
         table_name or os.environ.get("ORACLE_API_TABLE", "PRATA")
     )
-    columns_sql = ", ".join(PRATA_COLUMNS)
+    base_municipal = base_municipal_configurada()
+    columns = PRATA_COLUMNS + (("ID_MN_RESI",) if base_municipal == "residencia" else ())
+    columns_sql = ", ".join(columns)
     query = f"SELECT {columns_sql} FROM {table}"
     municipios = _carregar_municipios(Path(municipalities_path))
     reference_date = (hoje or pd.Timestamp.today()).normalize()
@@ -84,7 +87,7 @@ def carregar_oracle(
             cursor.arraysize = FETCH_SIZE
             cursor.execute(query)
             while rows := cursor.fetchmany(FETCH_SIZE):
-                batch = pd.DataFrame.from_records(rows, columns=PRATA_COLUMNS)
+                batch = pd.DataFrame.from_records(rows, columns=columns)
                 total += len(rows)
                 if total % 500_000 < FETCH_SIZE:
                     LOGGER.info("API: %s notificações lidas da tabela %s.", f"{total:,}", table)
@@ -104,6 +107,7 @@ def carregar_oracle(
                             batch.loc[valid],
                             dates.loc[valid],
                             municipios,
+                            base_municipal,
                         )
                     )
     finally:
@@ -116,6 +120,7 @@ def carregar_oracle(
         )
     if not notificacoes:
         raise ValueError("A tabela Oracle não contém notificações válidas.")
+    sem_residencia = sum(int(lote.attrs.get("sem_residencia", 0)) for lote in notificacoes)
     dataset_frame = pd.concat(notificacoes, ignore_index=True)
 
     LOGGER.info(
@@ -135,5 +140,7 @@ def carregar_oracle(
             "DT_NOTIFIC inválida": invalidas,
             "DT_NOTIFIC posterior à data de processamento": futuras,
         },
-        colunas_disponiveis=PRATA_COLUMNS,
+        colunas_disponiveis=columns,
+        base_municipal=base_municipal,
+        sem_residencia=sem_residencia,
     )

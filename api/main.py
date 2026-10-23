@@ -121,6 +121,8 @@ def meta(ds: DS):
         "linhas_descartadas": ds.linhas_descartadas,
         "total_notificacoes": len(ds.notificacoes),
         "fonte_dados": DATA_SOURCE,
+        "base_municipal": ds.base_municipal,
+        "sem_residencia": ds.sem_residencia,
         "ufs": [{"sigla": k, "nome": v} for k, v in sorted(UF_NOME.items(), key=lambda x: x[1])],
         "classificacoes": [{"codigo": k, "rotulo": v} for k, v in CLASSIFICACAO.items()],
         "confirmados_codigos": list(CONFIRMADOS),
@@ -215,8 +217,13 @@ def patient_assessment(
         )
     if request.headers.get("origin") not in ORIGENS:
         raise HTTPException(status_code=403, detail="Origem não permitida para envio do formulário.")
-    intake_id = save_assessment(submission)
-    return {"intake_id": intake_id, "status": "PENDENTE"}
+    result = save_assessment(submission)
+    return {
+        "intake_id": result.intake_id,
+        "status": result.status,
+        "campos_faltantes": list(result.missing_fields),
+        "inconsistencias": list(result.inconsistencies),
+    }
 
 
 def _csv(frame, nome: str) -> StreamingResponse:

@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Menu, X } from "lucide-react";
 import { Suspense, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { DataFreshnessIndicator } from "@/components/ui/freshness";
+import { FonteStrip } from "./fonte-strip";
 import { AppSidebar, NavList } from "./app-sidebar";
 import { BrandMark } from "./brand";
 import { ApiGate } from "./api-gate";
@@ -94,7 +95,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main id="conteudo" className="mx-auto w-full max-w-[1480px] flex-1 px-4 pt-6 pb-12 md:px-6">
           {montado ? (
             <ApiGate>
-              <Suspense>{children}</Suspense>
+              <Suspense>
+                <FonteStrip />
+                {children}
+              </Suspense>
             </ApiGate>
           ) : (
             <div aria-busy className="h-40" />

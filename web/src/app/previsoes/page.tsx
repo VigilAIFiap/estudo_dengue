@@ -3,6 +3,7 @@
 import { CircleSlash } from "lucide-react";
 import { ForecastChart } from "@/components/charts/forecast-chart";
 import { GlobalFilters } from "@/components/filters/global-filters";
+import { MetodologiaPrevisao } from "@/components/previsoes/metodologia-previsao";
 import { PageHeader } from "@/components/shell/page-header";
 import { Panel } from "@/components/ui/panel";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -18,7 +19,7 @@ export default function PrevisoesPage() {
     <>
       <PageHeader
         titulo="Previsões epidemiológicas"
-        descricao="Interface do modelo de séries temporais em src/modelos/series_temporais.py. A tela mostra exatamente o que o modelo devolve: quando ele recusa a série, a recusa e o motivo aparecem aqui."
+        descricao="Projeção mensal de casos confirmados por um modelo SARIMA, validada contra um baseline sazonal. Quando o modelo recusa a série, a recusa e o motivo aparecem aqui."
       />
       <GlobalFilters ignorados={{ periodo: "A previsão usa toda a série histórica do recorte geográfico; o filtro de período não se aplica." }} />
 
@@ -32,7 +33,7 @@ export default function PrevisoesPage() {
 
           <Panel
             id="serie"
-            className="xl:col-span-8"
+            className="xl:col-span-12"
             titulo={p.status === "disponivel" ? "Série observada e projeção de 12 meses" : "Série mensal observada"}
             subtitulo={`Casos confirmados por mês de notificação até ${fmtData(p.data_referencia)}; o mês em curso é descartado`}
             rodape={
@@ -43,25 +44,8 @@ export default function PrevisoesPage() {
             <ForecastChart dados={p} />
           </Panel>
 
-          <Panel id="metodo" className="xl:col-span-4" titulo="Metodologia">
-            <dl className="flex flex-col gap-3 text-[13px] leading-5">
-              {[
-                ["Modelo", "SARIMA com sazonalidade anual (m = 12), ordem escolhida por auto_arima (pmdarima)."],
-                ["Mínimo exigido", "24 meses completos (duas estações), regra do módulo."],
-                ["Horizonte", "12 meses, com intervalo de previsão de 95%."],
-                ["Validação", "Janelas móveis: 3 dobras de 3 meses, comparadas ao baseline sazonal ingênuo (repete o mesmo mês do ano anterior)."],
-                ["Data de referência", `${fmtData(p.data_referencia)}, última notificação carregada.`],
-                [
-                  "Definição de caso",
-                  "O modelo conta somente CLASSI_FIN 10, 11 e 12: dengue, dengue com sinais de alarme e dengue grave, conforme os confirmados exibidos no restante da plataforma.",
-                ],
-              ].map(([k, v]) => (
-                <div key={k}>
-                  <dt className="font-medium text-ink">{k}</dt>
-                  <dd className="text-ink-2">{v}</dd>
-                </div>
-              ))}
-            </dl>
+          <Panel id="metodo" className="xl:col-span-12" titulo="Metodologia da previsão" subtitulo="Como a projeção é construída, validada e deve ser lida">
+            <MetodologiaPrevisao dataReferencia={p.data_referencia} />
           </Panel>
 
           <Panel id="limites" className="xl:col-span-12" titulo="Limitações">
@@ -96,7 +80,7 @@ function Indisponivel({ p }: { p: Schemas["Previsao"] }) {
         </p>
         <p className="mt-2 max-w-[80ch] text-[13px] leading-5 text-muted">
           Nenhuma projeção é desenhada para preencher o gráfico. Para destravar, carregue o histórico de anos anteriores (por exemplo,
-          DENGBR23 e DENGBR24 do SINAN) ou aguarde novas extrações até completar {fmtInt(24)} meses.
+          DENGBR23 e DENGBR24 do SINAN) ou aguarde novas extrações até completar {fmtInt(33)} meses completos (24 de treino e 9 de validação).
         </p>
       </div>
     </section>

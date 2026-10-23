@@ -17,8 +17,7 @@ export function useHrefComFiltros() {
 
 function useStatusModulos(): Record<string, string | undefined> {
   return {
-    "/recursos": "Aguarda integração de insumos e custos",
-    "/pacientes": "Avaliação pendente no APEX",
+    "/pacientes": "Validação automática + revisão no APEX",
   };
 }
 
@@ -60,7 +59,7 @@ export function NavList({ recolhida = false, aoNavegar }: { recolhida?: boolean;
     <nav aria-label="Principal" className="flex flex-col gap-5">
       <ul className="flex flex-col gap-0.5">{NAV_ANALISE.map(item)}</ul>
       <div>
-        {!recolhida && <p className="mb-1.5 px-2.5 text-xs text-faint">Operação e apoio</p>}
+        {!recolhida && <p className="mb-1.5 px-2.5 text-xs text-faint">Triagem</p>}
         {recolhida && <hr className="mx-3 mb-2 border-line" />}
         <ul className="flex flex-col gap-0.5">{NAV_OPERACAO.map(item)}</ul>
       </div>

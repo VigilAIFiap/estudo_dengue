@@ -14,14 +14,17 @@ import { Panel } from "@/components/ui/panel";
 import { Segmented } from "@/components/ui/segmented";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import type { Schemas } from "@/lib/api";
+import { inicialMaiuscula, useRotuloBase } from "@/lib/base-municipal";
 import { fmtDec, fmtInt, fmtPct } from "@/lib/format";
-import { useMapa, useMunicipio } from "@/lib/queries";
+import { useMapa, useMeta, useMunicipio } from "@/lib/queries";
 import { useFiltros, useParametro } from "@/lib/use-filtros";
 
 const CAMADAS: Camada[] = ["notificacoes", "confirmados", "hospitalizacoes", "obitos", "score"];
 
 export default function MapaPage() {
   const mapa = useMapa();
+  const meta = useMeta();
+  const rotuloBase = useRotuloBase();
   const { filtros } = useFiltros();
   const [camadaParam, setCamada] = useParametro("camada");
   const [selParam, setSel] = useParametro("sel");
@@ -35,7 +38,7 @@ export default function MapaPage() {
     <>
       <PageHeader
         titulo="Inteligência geográfica"
-        descricao="Limites municipais do IBGE coloridos pelo indicador escolhido, no município notificador. Arraste para mover, use a roda do mouse ou os botões para aproximar e clique em um município para ver os detalhes."
+        descricao={`Limites municipais do IBGE coloridos pelo indicador escolhido, por ${rotuloBase}. Arraste para mover, use a roda do mouse ou os botões para aproximar e clique em um município para ver os detalhes.`}
       />
       <GlobalFilters ignorados={{ municipio: "No mapa, o município filtrado fica destacado e os demais continuam visíveis." }} />
 
@@ -47,7 +50,7 @@ export default function MapaPage() {
           subtitulo={
             camada === "score"
               ? "Nível do score de criticidade do projeto, relativo aos municípios do recorte"
-              : "Total no período, por município notificador"
+              : `Total no período, por ${rotuloBase}`
           }
           corpoClassName="flex flex-col gap-3"
         >
@@ -73,7 +76,21 @@ export default function MapaPage() {
               altura={altura}
             />
           )}
-          <MapLegend camada={camada} cortes={cortes} />
+          <MapLegend
+            camada={camada}
+            cortes={cortes}
+            contagens={
+              mapa.data
+                ? {
+                    semNotificacao: mapa.data.sem_notificacao,
+                    semScore: mapa.data.sem_score,
+                    q1: mapa.data.q1,
+                    base: meta.data?.base_municipal ?? "notificacao",
+                    semResidencia: meta.data?.sem_residencia ?? 0,
+                  }
+                : undefined
+            }
+          />
           <p className="text-xs leading-5 text-muted">
             Malha municipal: IBGE via geodata-br (CC0), simplificada para exibição. Não há população na base, por isso o mapa mostra
             contagens absolutas e não incidência por 100 mil habitantes.
@@ -191,12 +208,13 @@ function ResumoUf({ ufs }: { ufs: Schemas["UfMapa"][] | undefined }) {
 
 function DetalheSelecionado({ id, onFechar }: { id: number; onFechar: () => void }) {
   const d = useMunicipio(id);
+  const rotuloBase = useRotuloBase();
   const href = useHrefComFiltros();
   return (
     <Panel
       id="selecionado"
       titulo={d.data ? `${d.data.nome} (${d.data.uf})` : "Município selecionado"}
-      subtitulo={d.data?.capital ? "Capital" : "Município notificador"}
+      subtitulo={d.data?.capital ? "Capital" : inicialMaiuscula(rotuloBase)}
       acoes={
         <button type="button" onClick={onFechar} aria-label="Fechar detalhe" className="rounded-md p-1 text-muted hover:bg-sunken">
           <X aria-hidden className="size-4" />

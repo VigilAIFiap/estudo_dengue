@@ -2,7 +2,6 @@
 
 import { DistributionBars } from "@/components/charts/bars";
 import { MetricSeries, ROTULO_METRICA, type MetricaSerie } from "@/components/charts/metric-series";
-import { YearCompare } from "@/components/charts/year-compare";
 import { GlobalFilters } from "@/components/filters/global-filters";
 import { PageHeader } from "@/components/shell/page-header";
 import { ExportButton } from "@/components/ui/export-button";
@@ -11,7 +10,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import type { Schemas } from "@/lib/api";
 import { fmtData, fmtInt } from "@/lib/format";
-import { urlExportacao, useAnual, useDistribuicoes, useFiltrosResolvidos, useSeries } from "@/lib/queries";
+import { urlExportacao, useDistribuicoes, useFiltrosResolvidos, useSeries } from "@/lib/queries";
 import { useParametro } from "@/lib/use-filtros";
 
 const METRICAS: MetricaSerie[] = ["notificacoes", "confirmados", "graves", "hospitalizacoes", "obitos"];
@@ -20,20 +19,17 @@ export default function HistoricoPage() {
   const { params } = useFiltrosResolvidos();
   const [granParam, setGran] = useParametro("granularidade");
   const [metParam, setMet] = useParametro("metrica");
-  const [anualParam, setAnual] = useParametro("anual");
   const gran = granParam === "mes" ? "mes" : "semana";
   const metrica = (METRICAS.includes(metParam as MetricaSerie) ? metParam : "notificacoes") as MetricaSerie;
-  const metricaAnual = anualParam === "confirmados" ? "confirmados" : "notificacoes";
 
   const serie = useSeries(gran);
-  const anual = useAnual();
   const dist = useDistribuicoes();
 
   return (
     <>
       <PageHeader
         titulo="Análise histórica"
-        descricao="Séries por semana epidemiológica ou mês, comparação entre anos e distribuição das classificações. Arraste a régua sob o gráfico para aproximar um intervalo."
+        descricao="Séries por semana epidemiológica ou mês e distribuição das classificações. Arraste a régua sob o gráfico para aproximar um intervalo."
         acoes={<ExportButton href={urlExportacao("/api/export/serie.csv", params, { granularidade: gran })}>Exportar série</ExportButton>}
       />
       <GlobalFilters />
@@ -73,35 +69,6 @@ export default function HistoricoPage() {
             <EmptyState titulo="Nenhuma notificação no recorte">Ajuste os filtros para ver a série.</EmptyState>
           ) : (
             <MetricSeries serie={serie.data} metrica={metrica} altura={340} />
-          )}
-        </Panel>
-
-        <Panel
-          id="anos"
-          titulo="Comparação entre anos epidemiológicos"
-          subtitulo="Mesma semana epidemiológica em cada ano. Usa a base inteira: o filtro de período não se aplica aqui."
-          acoes={
-            <Segmented
-              rotulo="Indicador da comparação"
-              valor={metricaAnual}
-              onChange={(v) => setAnual(v === "notificacoes" ? null : v)}
-              opcoes={[
-                { valor: "notificacoes", rotulo: "Notificações" },
-                { valor: "confirmados", rotulo: "Confirmados" },
-              ]}
-            />
-          }
-          rodape={
-            anual.data &&
-            `O ano mais recente vai até ${fmtData(anual.data.ultima_data)} e não deve ser lido como ano completo. Notificações recentes ainda podem ser digitadas ou reclassificadas.`
-          }
-        >
-          {anual.isError ? (
-            <ErrorState erro={anual.error} tentarNovamente={() => anual.refetch()} />
-          ) : !anual.data ? (
-            <LoadingState altura={300} />
-          ) : (
-            <YearCompare dados={anual.data} metrica={metricaAnual} />
           )}
         </Panel>
 

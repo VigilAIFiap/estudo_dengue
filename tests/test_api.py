@@ -18,7 +18,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from api import analytics as a  # noqa: E402
 from api.dataset import carregar, semana_epidemiologica  # noqa: E402
 from api.main import DATA_SOURCE, app, dataset  # noqa: E402
-from criticidade import apply_criticality, classificar  # noqa: E402
+from api.triage_intake import AssessmentResult  # noqa: E402
+from criticidade import classificar  # noqa: E402
 
 CABECALHO = "DT_NOTIFIC,NU_ANO,SG_UF_NOT,ID_MUNICIP,HOSPITALIZ,CLASSI_FIN,EVOLUCAO\n"
 MUNICIPIOS = (
@@ -229,23 +230,6 @@ class CriticidadeTests(unittest.TestCase):
     def test_cortes_fixos(self):
         self.assertEqual([classificar(v) for v in (50, 49.9, 35, 20, 19.9)], ["Crítico", "Alto", "Alto", "Médio", "Baixo"])
 
-    def test_piso_zera_taxas_e_pesos_do_app(self):
-        f = pd.DataFrame(
-            {
-                "id_municip": [1, 2, 3],
-                "casos": [1000, 100, 10],
-                "obitos": [10, 0, 5],
-                "hospitalizados": [100, 0, 10],
-                "UF": ["SP"] * 3,
-            }
-        )
-        f["taxa_hospitalizacao"] = f["hospitalizados"] / f["casos"]
-        f["taxa_obito"] = f["obitos"] / f["casos"]
-        r = apply_criticality(f).set_index("id_municip")
-        self.assertEqual(r.loc[3, "taxa_obito"], 0.0)  # abaixo do piso de 50 casos
-        self.assertAlmostEqual(r.loc[1, "score_criticidade"], 100.0, places=1)
-        self.assertEqual(r.loc[3, "score_criticidade"], 0.0)
-
 
 class RotasTests(Base):
     def setUp(self):
@@ -290,6 +274,12 @@ class RotasTests(Base):
         self.assertTrue(linhas[0].startswith("mes;uf;codigo_ibge"))
         self.assertTrue(all(";SP;" in linha for linha in linhas[1:]))
 
+    def test_mapa_informa_municipios_sem_notificacao_e_sem_score(self):
+        r = self.client.get("/api/mapa").json()
+        self.assertEqual(len(r["pontos"]) + r["sem_notificacao"], r["cadastro"])
+        self.assertGreaterEqual(r["sem_notificacao"], 0)
+        self.assertLessEqual(r["sem_score"], len(r["pontos"]))
+
     def test_triage_form_requires_explicit_enablement(self):
         with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "false"}):
             response = self.client.post(
@@ -302,7 +292,12 @@ class RotasTests(Base):
     def test_triage_form_stores_only_allowlisted_fields(self):
         with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "true"}), patch(
             "api.main.save_assessment",
-            return_value=42,
+            return_value=AssessmentResult(
+                intake_id=42,
+                status="PENDENTE",
+                missing_fields=("FEBRE",),
+                inconsistencies=(),
+            ),
         ) as save:
             response = self.client.post(
                 "/api/pacientes/avaliacao",
@@ -311,10 +306,40 @@ class RotasTests(Base):
             )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json(), {"intake_id": 42, "status": "PENDENTE"})
+        self.assertEqual(
+            response.json(),
+            {
+                "intake_id": 42,
+                "status": "PENDENTE",
+                "campos_faltantes": ["FEBRE"],
+                "inconsistencias": [],
+            },
+        )
         self.assertEqual(save.call_args.args[0].age_group, "20-39")
         self.assertEqual(save.call_args.args[0].fever, "SIM")
         self.assertIsNone(save.call_args.args[0].sex)
+
+    def test_triage_form_reports_automatic_approval(self):
+        with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "true"}), patch(
+            "api.main.save_assessment",
+            return_value=AssessmentResult(intake_id=7, status="APROVADO"),
+        ):
+            response = self.client.post(
+                "/api/pacientes/avaliacao",
+                json={"age_group": "20-39"},
+                headers={"Origin": "http://localhost:3000"},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.json(),
+            {
+                "intake_id": 7,
+                "status": "APROVADO",
+                "campos_faltantes": [],
+                "inconsistencias": [],
+            },
+        )
 
     def test_triage_form_rejects_unapproved_fields_and_origins(self):
         with patch.dict("os.environ", {"TRIAGE_FORM_ENABLED": "true"}):

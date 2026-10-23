@@ -7,12 +7,19 @@ Regras de leitura da base:
 - DENGBR26.csv: somente NU_ANO 2026;
 - descarta DT_NOTIFIC inválida ou futura.
 
-A UF é derivada do código IBGE do município notificador (dimensão
+A UF é derivada do código IBGE do município usado na análise (dimensão
 municipios.csv), não de SG_UF_NOT, que mistura códigos e siglas.
+
+Município da análise (variável DENGUE_MUNICIPIO_BASE):
+- "notificacao" (padrão): ID_MUNICIP, onde fica a unidade de saúde que notificou;
+- "residencia": ID_MN_RESI, onde o paciente mora. Notificações sem residência
+  válida no cadastro usam o município de notificação e são contadas em
+  Dataset.sem_residencia.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +31,18 @@ COLUNAS = [
     "DT_NOTIFIC", "NU_ANO", "SG_UF_NOT", "ID_MUNICIP",
     "HOSPITALIZ", "CLASSI_FIN", "EVOLUCAO",
 ]
+
+BASES_MUNICIPAIS = ("notificacao", "residencia")
+
+
+def base_municipal_configurada() -> str:
+    base = os.environ.get("DENGUE_MUNICIPIO_BASE", "notificacao").strip().lower()
+    if base not in BASES_MUNICIPAIS:
+        raise ValueError(
+            f"DENGUE_MUNICIPIO_BASE inválido: {base!r}. Use 'notificacao' ou 'residencia'."
+        )
+    return base
+
 
 UF_SIGLA = {
     11: "RO", 12: "AC", 13: "AM", 14: "RR", 15: "PA", 16: "AP", 17: "TO",
@@ -78,6 +97,8 @@ class Dataset:
     arquivos: tuple[tuple[str, int, float], ...]  # (nome, bytes, mtime)
     linhas_descartadas: dict[str, int]
     colunas_disponiveis: tuple[str, ...]
+    base_municipal: str = "notificacao"
+    sem_residencia: int = 0  # notificações que usaram o município de notificação por falta de residência válida
 
 
 def semana_epidemiologica(datas: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
@@ -159,10 +180,17 @@ def _normalizar_notificacoes(
     bruto: pd.DataFrame,
     datas: pd.Series,
     municipios: pd.DataFrame,
+    base_municipal: str = "notificacao",
 ) -> pd.DataFrame:
     if bruto.empty:
         return pd.DataFrame()
     id_municip = pd.to_numeric(bruto["ID_MUNICIP"], errors="coerce")
+    sem_residencia = 0
+    if base_municipal == "residencia":
+        residencia = pd.to_numeric(bruto["ID_MN_RESI"], errors="coerce")
+        residencia_valida = residencia.notna() & residencia.isin(municipios.index)
+        sem_residencia = int((~residencia_valida).sum())
+        id_municip = residencia.where(residencia_valida, id_municip)
     sem_municipio = id_municip.isna() | ~id_municip.isin(municipios.index)
     if sem_municipio.any():
         raise ValueError(
@@ -199,6 +227,7 @@ def _normalizar_notificacoes(
     df["obito_dengue"] = evol == 2
     df["obito_investigacao"] = evol == 4
     df["hospitalizado"] = hosp == 1
+    df.attrs["sem_residencia"] = sem_residencia
     return df
 
 
@@ -209,11 +238,12 @@ def _montar_dataset(
     arquivos: tuple[tuple[str, int, float], ...],
     linhas_descartadas: dict[str, int],
     colunas_disponiveis: tuple[str, ...],
+    base_municipal: str = "notificacao",
 ) -> Dataset:
     if bruto.empty:
         raise ValueError("A fonte não contém notificações com data válida.")
     municipios = _carregar_municipios(arquivo_municipios)
-    notificacoes = _normalizar_notificacoes(bruto, datas, municipios)
+    notificacoes = _normalizar_notificacoes(bruto, datas, municipios, base_municipal)
     return Dataset(
         notificacoes=notificacoes,
         municipios=municipios,
@@ -221,6 +251,8 @@ def _montar_dataset(
         arquivos=arquivos,
         linhas_descartadas=linhas_descartadas,
         colunas_disponiveis=colunas_disponiveis,
+        base_municipal=base_municipal,
+        sem_residencia=int(notificacoes.attrs.get("sem_residencia", 0)),
     )
 
 
@@ -251,6 +283,16 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
         (arquivo_25, 2025),
         (arquivo_26, 2026),
     )
+    base_municipal = base_municipal_configurada()
+    colunas = list(COLUNAS)
+    if base_municipal == "residencia":
+        for arquivo, _ in sources:
+            if "ID_MN_RESI" not in _cabecalho(arquivo):
+                raise ValueError(
+                    f"{arquivo.name} não tem a coluna ID_MN_RESI, exigida por "
+                    "DENGUE_MUNICIPIO_BASE=residencia."
+                )
+        colunas.append("ID_MN_RESI")
     file_signatures = {
         arquivo: (arquivo.stat().st_size, arquivo.stat().st_mtime_ns)
         for arquivo, _ in sources
@@ -282,24 +324,23 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
         "obito_investigacao": np.empty(expected_rows, dtype=bool),
         "hospitalizado": np.empty(expected_rows, dtype=bool),
     }
-    leitura = dict(
-        sep=",",
-        encoding="latin-1",
-        usecols=COLUNAS,
-        dtype={
-            "DT_NOTIFIC": str,
-            "NU_ANO": str,
-            "SG_UF_NOT": str,
-            "ID_MUNICIP": "float64",
-            "HOSPITALIZ": "float32",
-            "CLASSI_FIN": "float32",
-            "EVOLUCAO": "float32",
-        },
-    )
+    tipos = {
+        "DT_NOTIFIC": str,
+        "NU_ANO": str,
+        "SG_UF_NOT": str,
+        "ID_MUNICIP": "float64",
+        "HOSPITALIZ": "float32",
+        "CLASSI_FIN": "float32",
+        "EVOLUCAO": "float32",
+    }
+    if base_municipal == "residencia":
+        tipos["ID_MN_RESI"] = "float64"
+    leitura = dict(sep=",", encoding="latin-1", usecols=colunas, dtype=tipos)
     cursor = 0
+    sem_residencia = 0
     for arquivo, year in sources:
         for chunk in pd.read_csv(arquivo, chunksize=250_000, **leitura):
-            selected = chunk.loc[chunk["NU_ANO"].eq(str(year)), COLUNAS]
+            selected = chunk.loc[chunk["NU_ANO"].eq(str(year)), colunas]
             if selected.empty:
                 continue
 
@@ -315,7 +356,9 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
                 selected.loc[validas],
                 datas.loc[validas],
                 municipios,
+                base_municipal,
             )
+            sem_residencia += int(normalizadas.attrs.get("sem_residencia", 0))
             end = cursor + len(normalizadas)
             for column in (
                 "data", "mes", "ano_epi", "semana_epi", "inicio_semana",
@@ -372,4 +415,6 @@ def carregar(data_dir: Path, hoje: pd.Timestamp | None = None) -> Dataset:
         arquivos=arquivos,
         linhas_descartadas=descartadas,
         colunas_disponiveis=colunas_disponiveis,
+        base_municipal=base_municipal,
+        sem_residencia=sem_residencia,
     )

@@ -8,6 +8,21 @@ import { ErrorState, LoadingState } from "@/components/ui/states";
 import { fmtDec, fmtInt, fmtPct } from "@/lib/format";
 import { useMunicipio } from "@/lib/queries";
 
+function BarraComponente({ rotulo, valor, cor, detalhe }: { rotulo: string; valor: number; cor: string; detalhe?: string }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-xs text-ink-2">
+        <span className="font-medium">{rotulo}</span>
+        <span className="num">{fmtDec(valor)}%</span>
+      </div>
+      <div className="mt-1 h-2 overflow-hidden rounded-full bg-sunken" aria-hidden>
+        <span className="block h-full rounded-full" style={{ width: `${valor}%`, background: cor }} />
+      </div>
+      {detalhe && <p className="mt-1 text-xs text-muted">{detalhe}</p>}
+    </div>
+  );
+}
+
 export function MunicipioDrawer({ id, onFechar }: { id: number | null; onFechar: () => void }) {
   const d = useMunicipio(id);
   const m = d.data;
@@ -46,28 +61,17 @@ export function MunicipioDrawer({ id, onFechar }: { id: number | null; onFechar:
                     <span className="ml-1 text-sm font-normal text-muted">de 100</span>
                   </p>
                   {m.componentes && (
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex h-2.5 gap-[2px] overflow-hidden rounded-full bg-sunken">
-                        <span style={{ width: `${m.componentes.volume}%`, background: "#2563eb" }} />
-                        <span style={{ width: `${m.componentes.obito}%`, background: "#0f9d9a" }} />
-                        <span style={{ width: `${m.componentes.hospitalizacao}%`, background: "#98a3b5" }} />
-                      </div>
-                      <ul className="flex flex-wrap gap-x-4 text-xs text-muted">
-                        <li>
-                          <span className="mr-1 inline-block size-2 rounded-sm bg-[#2563eb]" />
-                          Volume {fmtDec(m.componentes.volume)}
-                        </li>
-                        <li>
-                          <span className="mr-1 inline-block size-2 rounded-sm bg-[#0f9d9a]" />
-                          Óbito {fmtDec(m.componentes.obito)}
-                        </li>
-                        <li>
-                          <span className="mr-1 inline-block size-2 rounded-sm bg-[#98a3b5]" />
-                          Hospitalização {fmtDec(m.componentes.hospitalizacao)}
-                        </li>
-                      </ul>
-                      {m.componentes.abaixo_piso && (
-                        <p className="text-xs text-muted">Abaixo de 50 notificações: as taxas não pontuam.</p>
+                    <div className="flex flex-col gap-2.5">
+                      <BarraComponente rotulo="Fator de volume" valor={m.componentes.volume} cor="#2563eb" />
+                      <BarraComponente
+                        rotulo="Severidade"
+                        valor={m.componentes.severidade}
+                        cor="#dc2626"
+                        detalhe={`Óbito: percentil ${fmtDec(m.componentes.obito)} · Hospitalização: percentil ${fmtDec(m.componentes.hospitalizacao)}`}
+                      />
+                      <p className="text-xs text-muted">Score = volume × severidade.</p>
+                      {m.componentes.taxas_suavizadas && (
+                        <p className="text-xs text-muted">Poucas notificações: as taxas foram suavizadas em direção à média do recorte.</p>
                       )}
                     </div>
                   )}

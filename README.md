@@ -34,6 +34,8 @@ Copy-Item .env.example .env
 
 O modo analítico padrão é `DATA_SOURCE=csv`. Confira se `dados/raw/` contém `DENGBR23.csv`, `DENGBR24.csv`, `DENGBR25.csv`, `DENGBR26.csv` e `municipios.csv`. Para usar outro diretório, configure `DENGUE_DATA_DIR`.
 
+Por padrão, os casos são contados no município de notificação (`ID_MUNICIP`). Com `DENGUE_MUNICIPIO_BASE=residencia`, a API usa o município de residência do paciente (`ID_MN_RESI`), o que reduz os municípios sem notificação; isso exige a coluna `ID_MN_RESI` em todos os arquivos. `GET /api/meta` informa `base_municipal` e quantas notificações ficaram sem residência válida (`sem_residencia`).
+
 Para que o formulário grave no Oracle, configure no `.env` do backend as variáveis `DB_USER`, `DB_PASSWORD`, `DB_DSN`, `WALLET_DIR`, `WALLET_PASSWORD` e `VIGIL_DQ_SCHEMA`. Mantenha `TRIAGE_FORM_ENABLED=false` até instalar e validar as tabelas Oracle. Nunca grave credenciais ou arquivos wallet no Git.
 
 ## Iniciar a aplicação
@@ -184,7 +186,7 @@ O fluxo administrativo de qualidade CSV está separado do formulário de acolhim
 
 O formulário não coleta nome, CPF, endereço, telefone ou texto livre, mas as respostas continuam sendo dados de saúde. Use dados sintéticos para desenvolvimento, limite o acesso ao Oracle/APEX, defina retenção e auditoria e não exponha o formulário publicamente sem autenticação e controles de acesso adequados.
 
-`API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md).
+`API_CORS_ORIGINS` restringe origens de navegador; a validação do cabeçalho `Origin` **não é autenticação** e pode ser falsificada por clientes fora do navegador. O endpoint de gravação não deve ficar publicamente acessível com `TRIAGE_FORM_ENABLED=true` sem uma camada de controle de acesso e proteção contra abuso. O frontend não recebe credenciais Oracle; somente o backend deve acessar o banco. Para orientação de implantação fora do computador local, consulte [Guia de publicação e prompt de implantação](docs/GUIA_PUBLICACAO.md). Para publicar o front na Vercel, veja [Publicar o front na Vercel](docs/DEPLOY_VERCEL.md).
 
 ## Modelos experimentais
 

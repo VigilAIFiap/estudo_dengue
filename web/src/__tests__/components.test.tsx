@@ -29,6 +29,21 @@ describe("componentes", () => {
     expect(screen.getByRole("button", { name: "Como é calculado: Notificações" })).toBeInTheDocument();
   });
 
+  it("destaca a variação em cor: alta em vermelho, queda em verde", () => {
+    render(
+      <Tooltip.Provider>
+        <MetricBand
+          metricas={[
+            { id: "a", rotulo: "A", valor: "1", variacao: 12.5, comparacaoRotulo: "vs. 2025", calculo: "x" },
+            { id: "b", rotulo: "B", valor: "2", variacao: -3, comparacaoRotulo: "vs. 2025", calculo: "x" },
+          ]}
+        />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByText("+12,5%")).toHaveClass("text-critico-ink");
+    expect(screen.getByText("−3,0%")).toHaveClass("text-baixo-ink");
+  });
+
   it("estado de erro mostra a mensagem e permite tentar de novo", () => {
     const tentar = vi.fn();
     render(<ErrorState erro={new Error("API fora do ar")} tentarNovamente={tentar} />);
