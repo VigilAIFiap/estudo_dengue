@@ -117,6 +117,46 @@ class VerificacoesTests(unittest.TestCase):
         self.assertTrue(demo.verificar_valores_repetidos({"DATA_SOURCE": "oracle", "DB_DSN": "DB_DSN=x"})[0].critico)
         self.assertEqual(demo.verificar_valores_repetidos({"DB_DSN": "adwsus_low"}), [])
 
+    def test_env_vale_mesmo_quando_a_sessao_define_outro_valor(self):
+        env = {"TRIAGE_FORM_ENABLED": "true", "DB_USER": "VIGIL_APEX", "DB_PASSWORD": "senha-do-env"}
+        sessao = {"TRIAGE_FORM_ENABLED": "false", "DB_USER": "ADMIN", "DB_PASSWORD": "senha-do-admin", "PATH": "x"}
+        itens = demo.aplicar_env(env, sessao)
+        # o ambiente passa a ter os valores do .env (é o que a API e o front herdam)
+        self.assertEqual(sessao["TRIAGE_FORM_ENABLED"], "true")
+        self.assertEqual(sessao["DB_USER"], "VIGIL_APEX")
+        self.assertEqual(sessao["DB_PASSWORD"], "senha-do-env")
+        self.assertEqual(sessao["PATH"], "x")
+        # a API só aceita exatamente "true": confere a mesma regra do endpoint
+        self.assertEqual(sessao["TRIAGE_FORM_ENABLED"].strip().lower(), "true")
+        # aviso informativo, sem exibir segredos
+        self.assertEqual(len(itens), 1)
+        self.assertTrue(itens[0].ok)
+        detalhe = itens[0].detalhe
+        self.assertIn('TRIAGE_FORM_ENABLED (sessão: "false"; .env: "true")', detalhe)
+        self.assertIn('DB_USER (sessão: "ADMIN"; .env: "VIGIL_APEX")', detalhe)
+        self.assertIn("DB_PASSWORD (valor diferente do .env)", detalhe)
+        self.assertNotIn("senha-do-admin", detalhe)
+        self.assertNotIn("senha-do-env", detalhe)
+
+    def test_sem_conflito_nao_ha_aviso_e_o_env_e_aplicado(self):
+        sessao = {"DB_DSN": "adwsus_low"}
+        self.assertEqual(demo.aplicar_env({"DB_DSN": "adwsus_low", "DATA_SOURCE": "csv"}, sessao), [])
+        self.assertEqual(sessao["DATA_SOURCE"], "csv")  # chave nova também é aplicada
+        self.assertEqual(demo.aplicar_env({}, {}), [])
+
+    def test_avalia_a_conexao_com_o_oracle(self):
+        ok, detalhe = demo.avaliar_conexao("VIGIL_APEX", "VIGIL_APEX", 5)
+        self.assertTrue(ok)
+        ok, detalhe = demo.avaliar_conexao("ADMIN", "ADMIN", 0)
+        self.assertFalse(ok)
+        self.assertIn("conectado como ADMIN (schema ADMIN)", detalhe)
+        self.assertIn("sessão do PowerShell", detalhe)
+        ok, detalhe = demo.avaliar_conexao("VIGIL_APEX", "ADMIN", 5)  # schema trocado por ALTER SESSION
+        self.assertFalse(ok)
+        ok, detalhe = demo.avaliar_conexao("VIGIL_APEX", "VIGIL_APEX", 3)
+        self.assertFalse(ok)
+        self.assertIn("só 3", detalhe)
+
     def test_conta_apenas_avisos_nao_criticos(self):
         itens = [
             demo.Item("a", True, "ok"),
@@ -155,6 +195,26 @@ class RedeTests(unittest.TestCase):
         finally:
             servidor.shutdown()
             servidor.server_close()
+
+    def test_aquecer_previsao_mede_o_tempo_quando_a_api_responde(self):
+        servidor = HTTPServer(("127.0.0.1", 0), Saude)
+        fio = threading.Thread(target=servidor.serve_forever, daemon=True)
+        fio.start()
+        try:
+            ok, segundos = demo.aquecer_previsao(f"http://127.0.0.1:{servidor.server_port}/api/previsao", limite=5)
+        finally:
+            servidor.shutdown()
+            servidor.server_close()
+        self.assertTrue(ok)
+        self.assertGreaterEqual(segundos, 0)
+
+    def test_aquecer_previsao_nao_levanta_erro_quando_a_api_esta_fora(self):
+        livre = socket.socket()
+        livre.bind(("127.0.0.1", 0))
+        porta = livre.getsockname()[1]
+        livre.close()
+        ok, segundos = demo.aquecer_previsao(f"http://127.0.0.1:{porta}/api/previsao", limite=2)
+        self.assertFalse(ok)
 
     def test_esperar_url_desiste_depois_do_limite(self):
         livre = socket.socket()

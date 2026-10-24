@@ -7,6 +7,8 @@ estruturas serializáveis. Nenhum cálculo epidemiológico é feito no frontend.
 from __future__ import annotations
 
 import sys
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from functools import lru_cache
@@ -608,8 +610,7 @@ def insights_e_alertas(ds: Dataset, f: Filtros) -> dict:
     return {"insights": insights, "alertas": alertas}
 
 
-@lru_cache(maxsize=64)
-def previsao(ds: Dataset, f: Filtros) -> dict:
+def _calcular_previsao(ds: Dataset, f: Filtros) -> dict:
     """Executa o módulo src/modelos/series_temporais sem alterar suas regras."""
     from modelos.series_temporais import forecast_monthly_cases, prepare_monthly_cases, rolling_backtest
 
@@ -641,6 +642,42 @@ def previsao(ds: Dataset, f: Filtros) -> dict:
     ]
     base["validacao"] = validacao
     return {**base, "status": "disponivel", "motivo": None}
+
+
+# O ajuste do SARIMA (vários auto_arima, mais a validação) leva de dezenas de segundos a minutos. Por isso:
+# - o período não entra na chave do cache: ele não afeta a série, e mudá-lo não pode refazer o ajuste;
+# - uma trava única garante que pedidos simultâneos (por exemplo, as novas tentativas do front) esperem o
+#   primeiro cálculo em vez de iniciarem outros em paralelo, o que deixaria tudo mais lento.
+_PREVISAO_TRAVA = threading.Lock()
+_PREVISAO_CACHE: OrderedDict[tuple, dict] = OrderedDict()
+_PREVISAO_MAXIMO = 16
+
+
+def _filtros_da_previsao(f: Filtros) -> Filtros:
+    return Filtros(ufs=f.ufs, municipio=f.municipio, classificacoes=f.classificacoes)
+
+
+def previsao(ds: Dataset, f: Filtros) -> dict:
+    """Previsão mensal por SARIMA, calculada uma única vez por recorte geográfico."""
+    filtros = _filtros_da_previsao(f)
+    chave = (ds, filtros)
+    with _PREVISAO_TRAVA:
+        if chave in _PREVISAO_CACHE:
+            _PREVISAO_CACHE.move_to_end(chave)
+            return _PREVISAO_CACHE[chave]
+        resultado = _calcular_previsao(ds, filtros)
+        _PREVISAO_CACHE[chave] = resultado
+        while len(_PREVISAO_CACHE) > _PREVISAO_MAXIMO:
+            _PREVISAO_CACHE.popitem(last=False)
+        return resultado
+
+
+def _limpar_cache_previsao() -> None:
+    with _PREVISAO_TRAVA:
+        _PREVISAO_CACHE.clear()
+
+
+previsao.cache_clear = _limpar_cache_previsao  # mantém a interface usada por limpar_caches() e pelos testes
 
 
 def exportar_agregado(ds: Dataset, f: Filtros) -> pd.DataFrame:

@@ -6,6 +6,7 @@ Uso, na raiz do projeto, com o venv ativo:
     python scripts/demo.py --verificar     # só verifica o ambiente, sem iniciar nada
     python scripts/demo.py --build         # refaz o build do front antes de iniciar
     python scripts/demo.py --sem-navegador # não abre o navegador
+    python scripts/demo.py --sem-aquecer   # não pré-calcula a previsão
 
 Pare tudo com Ctrl+C. Os painéis funcionam sem internet (modo CSV); o Acolhimento e o Oracle APEX
 precisam de conexão com o Oracle na nuvem.
@@ -34,6 +35,10 @@ PORTA_FRONT = 3000
 URL_FRONT = f"http://localhost:{PORTA_FRONT}"
 ARQUIVOS_ANUAIS = ("DENGBR23.csv", "DENGBR24.csv", "DENGBR25.csv", "DENGBR26.csv")
 CHAVES_ORACLE = ("DB_USER", "DB_PASSWORD", "DB_DSN", "WALLET_DIR", "WALLET_PASSWORD")
+VALORES_VISIVEIS = {
+    "DB_USER", "DB_DSN", "DATA_SOURCE", "TRIAGE_FORM_ENABLED", "DENGUE_MUNICIPIO_BASE",
+    "VIGIL_DQ_SCHEMA", "ORACLE_API_TABLE", "API_CORS_ORIGINS",
+}
 
 
 @dataclass
@@ -95,6 +100,33 @@ def verificar_valores_repetidos(env: dict[str, str]) -> list[Item]:
         f"o valor de {', '.join(erradas)} repete o nome da variável (por exemplo, DB_DSN=DB_DSN=alias). "
         "Deixe só o valor depois do primeiro '='.",
         critico=obrigatorio,
+    )]
+
+
+def aplicar_env(env: dict[str, str], ambiente: dict[str, str] | None = None) -> list[Item]:
+    """Faz o .env valer nesta execução, mesmo que o Windows ou a sessão do PowerShell definam outros valores.
+
+    O load_dotenv() não sobrescreve variáveis já existentes; sem isto, um TRIAGE_FORM_ENABLED=false ou um
+    DB_USER=ADMIN esquecidos na sessão venceriam o .env e os processos filhos os herdariam.
+    """
+    ambiente = os.environ if ambiente is None else ambiente
+    conflitos = [chave for chave, valor in env.items() if chave in ambiente and ambiente[chave] != valor]
+    antigos_visiveis = {chave: ambiente[chave] for chave in conflitos if chave in VALORES_VISIVEIS}
+    ambiente.update(env)
+    if not conflitos:
+        return []
+    detalhes = []
+    for chave in conflitos:
+        if chave in VALORES_VISIVEIS:
+            detalhes.append(f'{chave} (sessão: "{antigos_visiveis.get(chave, "")}"; .env: "{env[chave]}")')
+        else:
+            detalhes.append(f"{chave} (valor diferente do .env)")
+    return [Item(
+        "Variáveis da sessão", True,
+        "o demo usa o .env e ignorou valores diferentes da sessão ou do Windows em: " + "; ".join(detalhes)
+        + ". Para limpá-los de vez: Remove-Item Env:NOME e, se vierem do Windows, "
+        "[Environment]::SetEnvironmentVariable('NOME', $null, 'User')",
+        critico=False,
     )]
 
 
@@ -167,6 +199,21 @@ def verificar_portas() -> list[Item]:
     return [Item("Portas 8000 e 3000", True, "livres")]
 
 
+def avaliar_conexao(usuario: str, esquema: str, validos: int) -> tuple[bool, str]:
+    """Decide se a conexão serve para o Acolhimento e explica o motivo quando não serve."""
+    if usuario != "VIGIL_APEX" or esquema != "VIGIL_APEX":
+        return False, (
+            f"conectado como {usuario} (schema {esquema}), mas o esperado é VIGIL_APEX. Confira DB_USER no .env e se "
+            "há DB_USER/DB_PASSWORD definidos na sessão do PowerShell: eles vencem o .env"
+        )
+    if validos < 5:
+        return False, (
+            f"só {validos} dos objetos da triagem estão válidos no Oracle (esperado: 5). "
+            "Rode o migrate_triage_approval.sql como VIGIL_APEX"
+        )
+    return True, "conectado ao schema VIGIL_APEX com os objetos da triagem válidos"
+
+
 def _consultar_oracle() -> tuple[bool, str]:
     sys.path.insert(0, str(RAIZ))
     from src.con_db import con_sql
@@ -176,19 +223,17 @@ def _consultar_oracle() -> tuple[bool, str]:
         return False, mensagem
     try:
         with conexao.cursor() as cursor:
-            cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
-            esquema = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT SYS_CONTEXT('USERENV', 'SESSION_USER'), SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL"
+            )
+            usuario, esquema = cursor.fetchone()
             cursor.execute(
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME IN "
                 "('VIGIL_TRIAGE_INTAKE', 'VIGIL_TRIAGE_APROVADO', 'VIGIL_TRIAGE_REVIEW', 'VIGIL_TRIAGE_REVIEW_QUEUE') "
                 "AND STATUS = 'VALID'"
             )
             validos = int(cursor.fetchone()[0])
-        if esquema != "VIGIL_APEX":
-            return False, f"conectado no schema {esquema}, mas o esperado é VIGIL_APEX (confira DB_USER no .env)"
-        if validos < 5:
-            return False, f"só {validos} dos objetos da triagem estão válidos no Oracle (esperado: 5). Rode o migrate_triage_approval.sql"
-        return True, "conectado ao schema VIGIL_APEX com os objetos da triagem válidos"
+        return avaliar_conexao(usuario, esquema, validos)
     finally:
         conexao.close()
 
@@ -251,6 +296,20 @@ def esperar_url(url: str, limite: float, intervalo: float = 1.0) -> bool:
     return False
 
 
+def aquecer_previsao(url: str, limite: float = 900) -> tuple[bool, float]:
+    """Pede a previsão uma vez, direto à API, para que ela fique em cache antes de a tela ser aberta.
+
+    O ajuste do SARIMA leva de dezenas de segundos a minutos; passando pelo front, o proxy do Next
+    desiste após cerca de 30 segundos. Devolve (deu certo, segundos gastos).
+    """
+    inicio = time.monotonic()
+    try:
+        with urllib.request.urlopen(url, timeout=limite) as resposta:
+            return resposta.status == 200, time.monotonic() - inicio
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+        return False, time.monotonic() - inicio
+
+
 def parar(processo: subprocess.Popen | None) -> None:
     """Encerra o processo e seus filhos (no Windows o npm cria um processo filho do Node)."""
     if processo is None or processo.poll() is not None:
@@ -287,7 +346,7 @@ def compilar_front(env: dict[str, str]) -> bool:
     return subprocess.run([npm, "run", "build"], cwd=WEB, env=ambiente_do_front(env)).returncode == 0
 
 
-def executar(env: dict[str, str], abrir_navegador: bool) -> int:
+def executar(env: dict[str, str], abrir_navegador: bool, aquecer: bool = True) -> int:
     api = front = None
     try:
         print(f"Iniciando a API na porta {PORTA_API} (carrega os dados antes de responder)...")
@@ -299,6 +358,14 @@ def executar(env: dict[str, str], abrir_navegador: bool) -> int:
             print("A API não respondeu em 5 minutos. Veja as mensagens acima.")
             return 1
         print("API pronta.")
+
+        if aquecer:
+            print("Preparando a previsão (na primeira vez leva de 1 a 3 minutos; depois fica em memória)...")
+            ok, segundos = aquecer_previsao(f"http://127.0.0.1:{PORTA_API}/api/previsao")
+            if ok:
+                print(f"Previsão pronta em {segundos:.0f}s.")
+            else:
+                print(f"Aviso: a previsão não ficou pronta ({segundos:.0f}s). A tela Previsões pode demorar na primeira abertura.")
 
         print(f"Iniciando o front na porta {PORTA_FRONT}...")
         npm = shutil.which("npm") or "npm"
@@ -333,10 +400,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verificar", action="store_true", help="só verifica o ambiente")
     ap.add_argument("--build", action="store_true", help="refaz o build do front antes de iniciar")
     ap.add_argument("--sem-navegador", action="store_true", help="não abre o navegador")
+    ap.add_argument("--sem-aquecer", action="store_true", help="não pré-calcula a previsão (a subida fica mais rápida)")
     args = ap.parse_args(argv)
 
     env = carregar_env()
+    informativos = aplicar_env(env)
     itens = verificar_tudo(env)
+    itens[1:1] = informativos  # logo depois do item do .env
     if not imprimir(itens):
         print("Corrija os itens [ERRO] e rode de novo.")
         return 1
@@ -355,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
         if not compilar_front(env):
             print("O build do front falhou. Veja as mensagens acima.")
             return 1
-    return executar(env, abrir_navegador=not args.sem_navegador)
+    return executar(env, abrir_navegador=not args.sem_navegador, aquecer=not args.sem_aquecer)
 
 
 if __name__ == "__main__":
