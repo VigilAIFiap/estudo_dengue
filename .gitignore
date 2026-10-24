@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -182,5 +182,17 @@ cython_debug/
 
 # Ignorar dados brutos
 dados/
+dados_wallet_pendente_validacao/
 *.csv
-*.json
+
+# Frontend build artifacts and dependencies
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo
+# A API hospedada precisa do cadastro de municípios (arquivo pequeno e público)
+!api/data/municipios.csv
+
+# Wallet do Oracle: nunca versionar
+wallet/
+Wallet_*
